@@ -42,6 +42,7 @@ pub struct ExplorerState {
     pub show_thumbnails: RwSignal<bool>,
     pub show_adjust: RwSignal<bool>,
     pub show_file_manager: RwSignal<bool>,
+    pub show_stars: RwSignal<bool>,
 }
 
 impl ExplorerState {
@@ -60,6 +61,7 @@ impl ExplorerState {
             show_thumbnails: RwSignal::new(true),
             show_adjust: RwSignal::new(true),
             show_file_manager: RwSignal::new(true),
+            show_stars: RwSignal::new(false),
         }
     }
 }

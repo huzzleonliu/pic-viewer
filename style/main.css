@@ -342,6 +342,99 @@ body {
   scrollbar-gutter: stable;
 }
 
+.mark-bar {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.2rem 0.7rem;
+  border-top: 1px solid var(--line);
+  background: #12151b;
+}
+
+.mark-stars {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0.15rem;
+}
+
+.mark-tags {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mark-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+}
+
+.tag-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  line-height: 1.35;
+  min-height: calc(1.35em + 6px);
+  max-height: calc(2.7em + 6px);
+  field-sizing: content;
+  margin: 0;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0d0f13;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.tag-input.is-tall {
+  overflow-y: auto;
+}
+
+.tag-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.tag-input:disabled {
+  opacity: 0.45;
+}
+
+.star-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #4a5160;
+  font-size: 1.15rem;
+  line-height: 1;
+  padding: 0.1rem 0.12rem;
+  cursor: pointer;
+}
+
+.star-btn.is-on {
+  color: #f0c14a;
+}
+
+.star-btn:hover:not(:disabled) {
+  color: #f5d67a;
+}
+
+.star-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .filmstrip {
   display: flex;
   flex-wrap: nowrap;

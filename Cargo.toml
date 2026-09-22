@@ -17,6 +17,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net"], 
 wasm-bindgen = { version = "0.2.106", optional = true }
 serde = { version = "1", features = ["derive"] }
 urlencoding = "2"
+little_exif = { version = "0.6.23", optional = true }
 
 [features]
 hydrate = [
@@ -28,6 +29,7 @@ ssr = [
     "dep:axum",
     "dep:tokio",
     "dep:leptos_axum",
+    "dep:little_exif",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",
