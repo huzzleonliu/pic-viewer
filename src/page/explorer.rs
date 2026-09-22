@@ -20,6 +20,7 @@ pub fn Explorer() -> impl IntoView {
                 <div class="header-toggles">
                     <PanelToggle label="缩略图" on=state.show_thumbnails/>
                     <PanelToggle label="标记" on=state.show_stars/>
+                    <PanelToggle label="筛选" on=state.show_filter/>
                     <PanelToggle label="简单调整" on=state.show_adjust/>
                     <PanelToggle label="文件管理器" on=state.show_file_manager/>
                 </div>

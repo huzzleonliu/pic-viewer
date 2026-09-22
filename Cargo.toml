@@ -18,18 +18,24 @@ wasm-bindgen = { version = "0.2.106", optional = true }
 serde = { version = "1", features = ["derive"] }
 urlencoding = "2"
 little_exif = { version = "0.6.23", optional = true }
+rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
+gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
 
 [features]
 hydrate = [
     "leptos/hydrate",
     "dep:console_error_panic_hook",
     "dep:wasm-bindgen",
+    "dep:gloo-timers",
 ]
 ssr = [
     "dep:axum",
     "dep:tokio",
     "dep:leptos_axum",
     "dep:little_exif",
+    "dep:rusqlite",
+    "dep:image",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

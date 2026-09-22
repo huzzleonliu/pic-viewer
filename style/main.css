@@ -354,6 +354,68 @@ body {
   background: #12151b;
 }
 
+.filter-bar {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.5rem;
+  padding: 0.28rem 0.7rem;
+  border-top: 1px solid var(--line);
+  background: #12151b;
+}
+
+.filter-select,
+.filter-tag-input {
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0d0f13;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.18rem 0.4rem;
+}
+
+.filter-select {
+  min-width: 3.2rem;
+}
+
+.filter-tag-input {
+  flex: 1 1 8rem;
+  min-width: 6rem;
+}
+
+.filter-tag-input:focus,
+.filter-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.filter-check {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  user-select: none;
+  cursor: pointer;
+}
+
+.filter-check input {
+  accent-color: var(--accent-2);
+}
+
+.filter-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
 .mark-stars {
   display: flex;
   align-items: center;

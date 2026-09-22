@@ -85,33 +85,39 @@ mod io {
         }
     }
 
-    fn decode_user_comment(bytes: &[u8], endian: &Endian) -> String {
-        if bytes.len() < 8 {
-            return String::from_utf8_lossy(bytes)
-                .trim_end_matches('\0')
-                .to_string();
-        }
-        let header = &bytes[..8];
-        let rest = &bytes[8..];
-        if header.starts_with(b"UNICODE") {
-            let units: Vec<u16> = rest
+    fn decode_utf16(bytes: &[u8], endian: &Endian) -> String {
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| match endian {
+                Endian::Little => u16::from_le_bytes([c[0], c[1]]),
+                Endian::Big => u16::from_be_bytes([c[0], c[1]]),
+            })
+            .collect();
+        crate::function::filter::normalize_tag_text(&String::from_utf16_lossy(&units))
+    }
+
+    fn looks_like_utf16(bytes: &[u8]) -> bool {
+        bytes.len() >= 2
+            && bytes.len() % 2 == 0
+            && bytes
                 .chunks_exact(2)
-                .map(|c| match endian {
-                    Endian::Little => u16::from_le_bytes([c[0], c[1]]),
-                    Endian::Big => u16::from_be_bytes([c[0], c[1]]),
-                })
-                .collect();
-            String::from_utf16_lossy(&units)
-                .trim_end_matches('\0')
-                .to_string()
-        } else if header.starts_with(b"ASCII") || header.iter().all(|&b| b == 0) {
-            String::from_utf8_lossy(rest)
-                .trim_end_matches('\0')
-                .to_string()
+                .filter(|c| (c[0] == 0) != (c[1] == 0))
+                .count()
+                * 2
+                >= bytes.len() / 2
+    }
+
+    fn decode_user_comment(bytes: &[u8], endian: &Endian) -> String {
+        if bytes.len() >= 8 && bytes.starts_with(b"UNICODE") {
+            decode_utf16(&bytes[8..], endian)
+        } else if bytes.len() >= 8
+            && (bytes.starts_with(b"ASCII") || bytes[..8].iter().all(|&b| b == 0))
+        {
+            crate::function::filter::normalize_tag_text(&String::from_utf8_lossy(&bytes[8..]))
+        } else if looks_like_utf16(bytes) {
+            decode_utf16(bytes, endian)
         } else {
-            String::from_utf8_lossy(rest)
-                .trim_end_matches('\0')
-                .to_string()
+            crate::function::filter::normalize_tag_text(&String::from_utf8_lossy(bytes))
         }
     }
 
@@ -136,9 +142,9 @@ mod io {
             }
         }
         if let Some(tag) = metadata.get_tag_by_hex(DESCRIPTION_TAG, None).next() {
-            return String::from_utf8_lossy(&tag.value_as_u8_vec(&endian))
-                .trim_end_matches('\0')
-                .to_string();
+            return crate::function::filter::normalize_tag_text(&String::from_utf8_lossy(
+                &tag.value_as_u8_vec(&endian),
+            ));
         }
         String::new()
     }
@@ -187,7 +193,17 @@ mod io {
 }
 
 #[cfg(feature = "ssr")]
-async fn with_image_path<T, F>(path: String, work: F) -> Result<T, ServerFnError>
+pub fn read_file_rating(path: &std::path::Path) -> Result<u8, String> {
+    io::read_rating(path)
+}
+
+#[cfg(feature = "ssr")]
+pub fn read_file_tags(path: &std::path::Path) -> Result<String, String> {
+    io::read_tags(path)
+}
+
+#[cfg(feature = "ssr")]
+pub async fn with_image_path<T, F>(path: String, work: F) -> Result<T, ServerFnError>
 where
     T: Send + 'static,
     F: FnOnce(&std::path::Path) -> Result<T, String> + Send + 'static,
@@ -218,7 +234,9 @@ pub async fn set_image_rating(path: String, rating: u8) -> Result<u8, ServerFnEr
     if rating > 5 {
         return Err(ServerFnError::new("星标须为 0–5"));
     }
-    with_image_path(path, move |p| io::write_rating(p, rating).map(|()| rating)).await
+    with_image_path(path.clone(), move |p| io::write_rating(p, rating).map(|()| rating)).await?;
+    crate::function::filter::touch_index_rating(&path, rating);
+    Ok(rating)
 }
 
 #[server]
@@ -231,5 +249,11 @@ pub async fn get_image_tags(path: String) -> Result<String, ServerFnError> {
 
 #[server]
 pub async fn set_image_tags(path: String, tags: String) -> Result<(), ServerFnError> {
-    with_image_path(path, move |p| io::write_tags(p, &tags)).await
+    with_image_path(path.clone(), {
+        let tags = tags.clone();
+        move |p| io::write_tags(p, &tags)
+    })
+    .await?;
+    crate::function::filter::touch_index_tags(&path, &tags);
+    Ok(())
 }

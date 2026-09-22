@@ -34,6 +34,7 @@ pub struct ExplorerState {
     pub checked: RwSignal<Vec<SelectedItem>>,
     pub viewed: RwSignal<Option<String>>,
     pub refresh: RwSignal<u64>,
+    pub media_rev: RwSignal<u64>,
     pub status: RwSignal<String>,
     pub confirm_delete: RwSignal<Option<Vec<SelectedItem>>>,
     pub rename_target: RwSignal<Option<SelectedItem>>,
@@ -43,6 +44,8 @@ pub struct ExplorerState {
     pub show_adjust: RwSignal<bool>,
     pub show_file_manager: RwSignal<bool>,
     pub show_stars: RwSignal<bool>,
+    pub show_filter: RwSignal<bool>,
+    pub filter_paths: RwSignal<Option<Vec<String>>>,
 }
 
 impl ExplorerState {
@@ -53,6 +56,7 @@ impl ExplorerState {
             checked: RwSignal::new(Vec::new()),
             viewed: RwSignal::new(None),
             refresh: RwSignal::new(0),
+            media_rev: RwSignal::new(0),
             status: RwSignal::new("就绪".into()),
             confirm_delete: RwSignal::new(None),
             rename_target: RwSignal::new(None),
@@ -62,6 +66,8 @@ impl ExplorerState {
             show_adjust: RwSignal::new(true),
             show_file_manager: RwSignal::new(true),
             show_stars: RwSignal::new(false),
+            show_filter: RwSignal::new(false),
+            filter_paths: RwSignal::new(None),
         }
     }
 }

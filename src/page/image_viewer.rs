@@ -1,6 +1,6 @@
 use crate::function::{
-    get_image_rating, get_image_tags, list_dir, media_url, parent_path, set_image_rating,
-    set_image_tags,
+    apply_meta_filter, get_image_rating, get_image_tags, get_meta_index_status, list_dir, media_url,
+    parent_path, save_rotated_image, set_image_rating, set_image_tags, start_meta_index,
 };
 use crate::structure::{ExplorerState, FsEntry, SelectedItem};
 use leptos::ev;
@@ -28,24 +28,22 @@ pub fn ImageViewer() -> impl IntoView {
         failed.set(false);
     });
 
-    let gallery = Resource::new(
-        move || {
-            let viewed = state.viewed.get();
-            let selected = state.selected.get();
-            let refresh = state.refresh.get();
-            let dir = if let Some(path) = viewed {
-                parent_path(&path)
-            } else if let Some(s) = selected {
-                if s.is_dir {
-                    s.path
-                } else {
-                    parent_path(&s.path)
-                }
+    let gallery_dir = Memo::new(move |_| {
+        if let Some(path) = state.viewed.get() {
+            parent_path(&path)
+        } else if let Some(s) = state.selected.get() {
+            if s.is_dir {
+                s.path
             } else {
-                String::new()
-            };
-            (dir, refresh)
-        },
+                parent_path(&s.path)
+            }
+        } else {
+            String::new()
+        }
+    });
+
+    let gallery = Resource::new(
+        move || (gallery_dir.get(), state.refresh.get()),
         |(dir, _)| async move {
             let entries = list_dir(dir).await?;
             Ok::<Vec<FsEntry>, ServerFnError>(
@@ -53,6 +51,41 @@ pub fn ImageViewer() -> impl IntoView {
             )
         },
     );
+
+    Effect::new(move |_| {
+        let dir = gallery_dir.get();
+        let epoch = state.refresh.get();
+        state.filter_paths.set(None);
+        leptos::task::spawn_local(async move {
+            if let Err(e) = start_meta_index(dir, epoch).await {
+                state.status.set(format!("读取元数据失败：{e}"));
+            }
+        });
+    });
+
+    let saving = RwSignal::new(false);
+
+    let save_rotation = move |_| {
+        let Some(path) = state.viewed.get() else {
+            return;
+        };
+        let degrees = rotate.get().rem_euclid(360);
+        if degrees == 0 || saving.get() {
+            return;
+        }
+        saving.set(true);
+        leptos::task::spawn_local(async move {
+            match save_rotated_image(path, degrees).await {
+                Ok(()) => {
+                    rotate.set(0);
+                    state.media_rev.update(|n| *n += 1);
+                    state.status.set("已保存旋转".into());
+                }
+                Err(e) => state.status.set(format!("保存失败：{e}")),
+            }
+            saving.set(false);
+        });
+    };
 
     let go_relative = move |delta: isize| {
         let Some(current) = state.viewed.get() else {
@@ -102,6 +135,18 @@ pub fn ImageViewer() -> impl IntoView {
                     "↻"
                 </button>
                 <button class="btn" on:click=reset title="重置缩放与旋转">"重置"</button>
+                <button
+                    class="btn"
+                    title="把当前旋转写入文件"
+                    disabled=move || {
+                        state.viewed.get().is_none()
+                            || saving.get()
+                            || rotate.get().rem_euclid(360) == 0
+                    }
+                    on:click=save_rotation
+                >
+                    "保存"
+                </button>
                 <button class="btn" on:click=move |_| go_relative(-1) title="上一张">"‹"</button>
                 <button class="btn" on:click=move |_| go_relative(1) title="下一张">"›"</button>
                 <span class="viewer-name">
@@ -151,7 +196,12 @@ pub fn ImageViewer() -> impl IntoView {
             >
                 {move || match state.viewed.get() {
                     Some(path) => {
-                        let src = media_url(&path);
+                        let src = {
+                            let path = path.clone();
+                            move || {
+                                format!("{}?v={}", media_url(&path), state.media_rev.get())
+                            }
+                        };
                         let checked_path = path.clone();
                         let change_path = path.clone();
                         let change_name = path
@@ -224,29 +274,209 @@ pub fn ImageViewer() -> impl IntoView {
                     }
                 }}
             </div>
+            <FilterBar dir=gallery_dir/>
             <MarkBar/>
             <Suspense fallback=|| ()>
                 {move || {
                     gallery.get().and_then(|res| match res {
                         Ok(entries) if entries.is_empty() => None,
-                        Ok(entries) => Some(
-                            view! {
-                                <div class="filmstrip-rail" class:panel-off=move || !state.show_thumbnails.get()>
-                                    <div class="filmstrip">
-                                        {entries
-                                            .into_iter()
-                                            .map(|entry| view! { <Thumb entry/> })
-                                            .collect_view()}
+                        Ok(entries) => {
+                            let shown = match state.filter_paths.get() {
+                                Some(paths) => entries
+                                    .into_iter()
+                                    .filter(|e| paths.iter().any(|p| p == &e.path))
+                                    .collect::<Vec<_>>(),
+                                None => entries,
+                            };
+                            Some(
+                                view! {
+                                    <div class="filmstrip-rail" class:panel-off=move || !state.show_thumbnails.get()>
+                                        <div class="filmstrip">
+                                            {shown
+                                                .into_iter()
+                                                .map(|entry| view! { <Thumb entry/> })
+                                                .collect_view()}
+                                        </div>
                                     </div>
-                                </div>
-                            },
-                        ),
+                                },
+                            )
+                        }
                         Err(_) => None,
                     })
                 }}
             </Suspense>
         </section>
     }.into_any()
+}
+
+#[component]
+fn FilterBar(dir: Memo<String>) -> impl IntoView {
+    let state = expect_context::<ExplorerState>();
+    let star_op = RwSignal::new("any".to_string());
+    let star_val = RwSignal::new("0".to_string());
+    let tag_mode = RwSignal::new("contains".to_string());
+    let tag_query = RwSignal::new(String::new());
+    let complement = RwSignal::new(false);
+    let applying = RwSignal::new(false);
+    let ready = RwSignal::new(false);
+    let progress = RwSignal::new((0u32, 0u32));
+    let poll_gen = RwSignal::new(0u64);
+
+    Effect::new(move |_| {
+        let dir = dir.get();
+        ready.set(false);
+        progress.set((0, 0));
+        poll_gen.update(|n| *n += 1);
+        let my = poll_gen.get_untracked();
+        leptos::task::spawn_local(async move {
+            loop {
+                if poll_gen.get_untracked() != my {
+                    return;
+                }
+                match get_meta_index_status(dir.clone()).await {
+                    Ok(s) => {
+                        progress.set((s.done, s.total));
+                        if s.ready {
+                            ready.set(true);
+                            return;
+                        }
+                    }
+                    Err(_) => {}
+                }
+                #[cfg(target_arch = "wasm32")]
+                gloo_timers::future::TimeoutFuture::new(250).await;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    return;
+                }
+            }
+        });
+    });
+
+    view! {
+        <div class="filter-bar" class:panel-off=move || !state.show_filter.get()>
+            <span class="mark-label">"星标"</span>
+            <select
+                class="filter-select"
+                prop:value=move || star_op.get()
+                on:change=move |ev| star_op.set(event_target_value(&ev))
+            >
+                <option value="any" selected>"不限"</option>
+                <option value="lt">"<"</option>
+                <option value="le">"<="</option>
+                <option value="eq">"="</option>
+                <option value="ge">">="</option>
+                <option value="gt">">"</option>
+            </select>
+            <select
+                class="filter-select"
+                prop:value=move || star_val.get()
+                disabled=move || star_op.get() == "any"
+                on:change=move |ev| star_val.set(event_target_value(&ev))
+            >
+                <option value="0" selected>"0"</option>
+                <option value="1">"1"</option>
+                <option value="2">"2"</option>
+                <option value="3">"3"</option>
+                <option value="4">"4"</option>
+                <option value="5">"5"</option>
+            </select>
+            <span class="mark-label">"tag"</span>
+            <select
+                class="filter-select"
+                prop:value=move || tag_mode.get()
+                on:change=move |ev| tag_mode.set(event_target_value(&ev))
+            >
+                <option value="eq">"全等"</option>
+                <option value="contains" selected>"包含"</option>
+                <option value="excludes">"不包含"</option>
+            </select>
+            <input
+                class="filter-tag-input"
+                type="text"
+                placeholder="筛选 tag"
+                prop:value=move || tag_query.get()
+                on:input=move |ev| tag_query.set(event_target_value(&ev))
+            />
+            <label class="filter-check">
+                <input
+                    type="checkbox"
+                    prop:checked=move || complement.get()
+                    on:change=move |ev| complement.set(event_target_checked(&ev))
+                />
+                "补集"
+            </label>
+            <div class="filter-actions">
+                <button
+                    class="btn filter-apply"
+                    type="button"
+                    disabled=move || !ready.get() || applying.get()
+                    title=move || {
+                        if ready.get() {
+                            "应用筛选".into()
+                        } else {
+                            let (done, total) = progress.get();
+                            if total == 0 {
+                                "读取元数据…".into()
+                            } else {
+                                format!("读取元数据 {done}/{total}")
+                            }
+                        }
+                    }
+                    on:click=move |_| {
+                        if !ready.get() || applying.get() {
+                            return;
+                        }
+                        let dir = dir.get();
+                        let star_op = star_op.get();
+                        let star_val = star_val.get().parse::<u8>().unwrap_or(0);
+                        let tag_mode = tag_mode.get();
+                        let tag_query = tag_query.get();
+                        let complement = complement.get();
+                        applying.set(true);
+                        leptos::task::spawn_local(async move {
+                            match apply_meta_filter(
+                                dir,
+                                star_op,
+                                star_val,
+                                tag_mode,
+                                tag_query,
+                                complement,
+                            )
+                            .await
+                            {
+                                Ok(paths) => {
+                                    let n = paths.len();
+                                    state.filter_paths.set(Some(paths));
+                                    state.status.set(format!("已筛选 {n} 张"));
+                                }
+                                Err(e) => state.status.set(format!("筛选失败：{e}")),
+                            }
+                            applying.set(false);
+                        });
+                    }
+                >
+                    "确认"
+                </button>
+                <button
+                    class="btn"
+                    type="button"
+                    title="去掉所有筛选条件"
+                    on:click=move |_| {
+                        star_op.set("any".into());
+                        star_val.set("0".into());
+                        tag_mode.set("contains".into());
+                        tag_query.set(String::new());
+                        complement.set(false);
+                        state.filter_paths.set(None);
+                        state.status.set("已重置筛选".into());
+                    }
+                >
+                    "重置"
+                </button>
+            </div>
+        </div>
+    }
 }
 
 #[component]
@@ -435,7 +665,10 @@ fn Thumb(entry: FsEntry) -> impl IntoView {
     let state = expect_context::<ExplorerState>();
     let path = entry.path.clone();
     let name = entry.name.clone();
-    let src = media_url(&path);
+    let src = {
+        let path = path.clone();
+        move || format!("{}?v={}", media_url(&path), state.media_rev.get())
+    };
     let path_active = path.clone();
     let path_checked_class = path.clone();
     let path_checked_box = path.clone();
