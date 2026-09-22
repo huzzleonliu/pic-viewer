@@ -1,10 +1,8 @@
 # 本机用 Podman 调试 Pic Viewer。
 # 把 test/pic 挂到容器 /data，对应应用的 PIC_ROOT。
 #
-# 启动（在仓库根目录）：
-#   podman compose -f podman-compose.yml up --build
-#   或
-#   podman-compose -f podman-compose.yml up --build
+# 启动（在仓库根目录，Compose 默认读取本文件）：
+#   podman compose up -d --build
 #
 # 浏览器打开 http://127.0.0.1:3020
 # （容器内仍是 3000；宿主机 3000 常被占用，所以映射到 3020）

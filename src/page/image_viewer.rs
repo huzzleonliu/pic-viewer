@@ -1,5 +1,5 @@
-use crate::app::ExplorerState;
-use crate::fs_api::{list_dir, media_url, parent_path, FsEntry};
+use crate::function::{list_dir, media_url, parent_path};
+use crate::structure::{ExplorerState, FsEntry, SelectedItem};
 use leptos::ev;
 use leptos::prelude::*;
 use leptos::server_fn::ServerFnError;
@@ -64,7 +64,7 @@ pub fn ImageViewer() -> impl IntoView {
         if next >= 0 && (next as usize) < list.len() {
             let entry = &list[next as usize];
             state.viewed.set(Some(entry.path.clone()));
-            state.selected.set(Some(crate::app::SelectedItem {
+            state.selected.set(Some(SelectedItem {
                 path: entry.path.clone(),
                 name: entry.name.clone(),
                 is_dir: false,
@@ -85,34 +85,9 @@ pub fn ImageViewer() -> impl IntoView {
         pan.set((0.0, 0.0));
     };
 
-    let handle = window_event_listener(ev::keydown, move |ev: ev::KeyboardEvent| {
-        if state.confirm_delete.get_untracked().is_some()
-            || state.rename_target.get_untracked().is_some()
-        {
-            return;
-        }
-        if ev.ctrl_key() || ev.meta_key() {
-            return;
-        }
-        match ev.key().as_str() {
-            "+" | "=" => zoom_by(1.2),
-            "-" => zoom_by(1.0 / 1.2),
-            "0" => {
-                zoom.set(1.0);
-                rotate.set(0);
-                pan.set((0.0, 0.0));
-            }
-            "r" | "R" => rotate.update(|r| *r = (*r + 90) % 360),
-            "ArrowLeft" => go_relative(-1),
-            "ArrowRight" => go_relative(1),
-            _ => {}
-        }
-    });
-    on_cleanup(move || drop(handle));
-
     view! {
         <section class="viewer">
-            <div class="viewer-toolbar">
+            <div class="viewer-toolbar" class:panel-off=move || !state.show_adjust.get()>
                 <button class="btn" on:click=move |_| zoom_by(1.0 / 1.2) title="缩小">"−"</button>
                 <span class="zoom-label">{move || format!("{}%", (zoom.get() * 100.0).round())}</span>
                 <button class="btn" on:click=move |_| zoom_by(1.2) title="放大">"+"</button>
@@ -251,11 +226,13 @@ pub fn ImageViewer() -> impl IntoView {
                         Ok(entries) if entries.is_empty() => None,
                         Ok(entries) => Some(
                             view! {
-                                <div class="filmstrip">
-                                    {entries
-                                        .into_iter()
-                                        .map(|entry| view! { <Thumb entry/> })
-                                        .collect_view()}
+                                <div class="filmstrip-rail" class:panel-off=move || !state.show_thumbnails.get()>
+                                    <div class="filmstrip">
+                                        {entries
+                                            .into_iter()
+                                            .map(|entry| view! { <Thumb entry/> })
+                                            .collect_view()}
+                                    </div>
                                 </div>
                             },
                         ),
@@ -264,7 +241,7 @@ pub fn ImageViewer() -> impl IntoView {
                 }}
             </Suspense>
         </section>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -284,7 +261,7 @@ fn Thumb(entry: FsEntry) -> impl IntoView {
         let name = name.clone();
         move |_| {
             state.viewed.set(Some(path.clone()));
-            state.selected.set(Some(crate::app::SelectedItem {
+            state.selected.set(Some(SelectedItem {
                 path: path.clone(),
                 name: name.clone(),
                 is_dir: false,

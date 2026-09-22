@@ -1,12 +1,13 @@
-pub mod app;
-pub mod file_tree;
-pub mod fs_api;
-pub mod image_viewer;
+#![recursion_limit = "512"]
+
+pub mod function;
+pub mod page;
+pub mod structure;
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate() {
-    use crate::app::App;
+    use crate::page::app::App;
     console_error_panic_hook::set_once();
     leptos::mount::hydrate_body(App);
 }

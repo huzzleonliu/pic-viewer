@@ -1,5 +1,5 @@
-use crate::app::{ClipboardMode, ExplorerState, SelectedItem};
-use crate::fs_api::{list_dir, FsEntry};
+use crate::function::list_dir;
+use crate::structure::{ClipboardMode, ExplorerState, FsEntry, SelectedItem};
 use leptos::prelude::*;
 
 #[component]
@@ -10,7 +10,7 @@ pub fn FilePane() -> impl IntoView {
     let clipboard_empty = move || state.clipboard.get().is_none() || state.busy.get();
 
     view! {
-        <aside class="sidebar">
+        <aside class="sidebar" class:panel-off=move || !state.show_file_manager.get()>
             <div class="toolbar-stack">
                 <div class="toolbar">
                     <span class="toolbar-label">"当前项"</span>
@@ -78,6 +78,22 @@ pub fn FilePane() -> impl IntoView {
                     </span>
                     <button
                         class="btn"
+                        title="勾选当前目录全部图片"
+                        disabled=move || state.busy.get()
+                        on:click=move |_| state.check_all_current()
+                    >
+                        "全选"
+                    </button>
+                    <button
+                        class="btn"
+                        title="取消全部勾选"
+                        disabled=no_checked
+                        on:click=move |_| state.uncheck_all()
+                    >
+                        "全不选"
+                    </button>
+                    <button
+                        class="btn"
                         title="复制勾选的图片"
                         disabled=no_checked
                         on:click=move |_| state.copy_checked()
@@ -140,7 +156,7 @@ pub fn FilePane() -> impl IntoView {
                 <RootTree/>
             </div>
         </aside>
-    }
+    }.into_any()
 }
 
 #[component]
@@ -323,5 +339,5 @@ fn TreeNode(entry: FsEntry, depth: u32, #[prop(optional)] start_open: bool) -> i
                 </Suspense>
             </Show>
         </li>
-    }
+    }.into_any()
 }

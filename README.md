@@ -5,9 +5,9 @@
 ## 功能
 
 - 左侧文件树：展开目录，选择文件
-- 复制 / 粘贴 / 删除（工具栏或 `Ctrl+C` / `Ctrl+V` / `Delete`）
+- 复制 / 粘贴 / 删除（工具栏）
 - 右侧看图：放大、缩小、旋转、拖拽平移
-- 滚轮缩放，`R` 旋转，`←` `→` 同目录切图，`0` 重置
+- 滚轮缩放；顶栏可开关缩略图、简单调整、文件管理器
 
 路径操作限制在 `PIC_ROOT` 内，会拒绝 `..` 越界。
 
@@ -50,14 +50,12 @@ cargo leptos watch
 测试目录在 `test/pic/`（含子文件夹、示例 PNG，以及一个非图片 `misc/notes.txt`）。Compose 会把它挂到容器的 `/data`。
 
 ```bash
-podman compose -f podman-compose.yml up --build
-# 或
-podman-compose -f podman-compose.yml up --build
+podman compose up -d --build
 ```
 
 打开 http://127.0.0.1:3020 。改测试图直接编辑 `test/pic/` 即可，刷新左侧文件树。
 
-停止：`Ctrl+C`，或另开终端执行 `podman compose -f podman-compose.yml down`。
+停止：`podman compose down`。
 
 ## Docker
 

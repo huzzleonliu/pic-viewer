@@ -2,7 +2,8 @@ FROM rust:bookworm AS builder
 RUN rustup target add wasm32-unknown-unknown \
     && cargo install cargo-leptos --locked
 WORKDIR /app
-COPY Cargo.toml rust-toolchain.toml ./
+COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+RUN rustup show && rustup target add wasm32-unknown-unknown
 COPY src ./src
 COPY style ./style
 COPY public ./public

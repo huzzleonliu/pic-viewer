@@ -22,7 +22,10 @@ html,
 body,
 main {
   height: 100%;
+  width: 100%;
+  max-width: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -38,6 +41,9 @@ body {
 
 .explorer {
   height: 100%;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr auto;
 }
@@ -84,15 +90,25 @@ body {
   max-width: 46vw;
 }
 
-.header-hint {
+.header-toggles {
   margin-left: auto;
-  color: var(--muted);
-  font-size: 0.78rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.header-toggles .btn.is-active {
+  border-color: var(--accent);
+  background: var(--selected);
+  color: #fff;
 }
 
 .workspace {
   display: flex;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -105,6 +121,10 @@ body {
   flex-direction: column;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--line);
+}
+
+.panel-off {
+  display: none !important;
 }
 
 .toolbar-stack {
@@ -233,9 +253,15 @@ body {
 .viewer {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: radial-gradient(circle at 50% 20%, #1a1e27, var(--bg) 55%);
+}
+
+.viewer > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .viewer-toolbar {
@@ -304,13 +330,26 @@ body {
   accent-color: var(--accent-2);
 }
 
-.filmstrip {
-  display: flex;
-  gap: 0.45rem;
-  padding: 0.55rem 0.7rem;
+.filmstrip-rail {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   border-top: 1px solid var(--line);
   background: #12151b;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+}
+
+.filmstrip {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  padding: 0.55rem 0.7rem;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
 }
 
 .thumb {
@@ -458,6 +497,12 @@ body {
   color: #fff;
 }
 
+.btn.is-active {
+  border-color: var(--accent);
+  background: var(--selected);
+  color: #fff;
+}
+
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -548,9 +593,5 @@ body {
     max-width: none;
     height: 38vh;
     resize: vertical;
-  }
-
-  .header-hint {
-    display: none;
   }
 }

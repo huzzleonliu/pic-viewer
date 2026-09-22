@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
@@ -6,8 +8,8 @@ async fn main() {
     use leptos::logging::log;
     use leptos::prelude::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
-    use pic_viewer::app::{shell, App};
-    use pic_viewer::fs_api::{pic_root, serve_media};
+    use pic_viewer::function::{pic_root, serve_media};
+    use pic_viewer::page::app::{shell, App};
 
     let conf = get_configuration(None).unwrap();
     let addr = conf.leptos_options.site_addr;

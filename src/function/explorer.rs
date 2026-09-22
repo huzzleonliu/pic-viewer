@@ -1,55 +1,7 @@
-use crate::file_tree::FilePane;
-use crate::fs_api::{
-    delete_entry, is_image_name, parent_path, paste_entry, rename_entry, rewrite_prefix,
-    validate_file_name,
-};
-use crate::image_viewer::ImageViewer;
-use leptos::ev;
+use crate::function::fs::{delete_entry, list_dir, paste_entry, rename_entry};
+use crate::function::path::{is_image_name, parent_path, rewrite_prefix, validate_file_name};
+use crate::structure::{Clipboard, ClipboardItem, ClipboardMode, ExplorerState, SelectedItem};
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
-use leptos_router::components::{Route, Router, Routes};
-use leptos_router::StaticSegment;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SelectedItem {
-    pub path: String,
-    pub name: String,
-    pub is_dir: bool,
-    pub is_image: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClipboardItem {
-    pub path: String,
-    pub name: String,
-    pub is_dir: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClipboardMode {
-    Copy,
-    Cut,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Clipboard {
-    pub items: Vec<ClipboardItem>,
-    pub mode: ClipboardMode,
-}
-
-#[derive(Clone, Copy)]
-pub struct ExplorerState {
-    pub selected: RwSignal<Option<SelectedItem>>,
-    pub clipboard: RwSignal<Option<Clipboard>>,
-    pub checked: RwSignal<Vec<SelectedItem>>,
-    pub viewed: RwSignal<Option<String>>,
-    pub refresh: RwSignal<u64>,
-    pub status: RwSignal<String>,
-    pub confirm_delete: RwSignal<Option<Vec<SelectedItem>>>,
-    pub rename_target: RwSignal<Option<SelectedItem>>,
-    pub rename_draft: RwSignal<String>,
-    pub busy: RwSignal<bool>,
-}
 
 impl ExplorerState {
     pub fn is_checked(self, path: &str) -> bool {
@@ -72,6 +24,60 @@ impl ExplorerState {
                 _ => {}
             }
         });
+    }
+
+    pub fn check_all_current(self) {
+        if self.busy.get() {
+            return;
+        }
+        let dir = match self.viewed.get() {
+            Some(path) => parent_path(&path),
+            None => match self.selected.get() {
+                Some(s) if s.is_dir => s.path,
+                Some(s) => parent_path(&s.path),
+                None => String::new(),
+            },
+        };
+        self.busy.set(true);
+        leptos::task::spawn_local(async move {
+            match list_dir(dir).await {
+                Ok(entries) => {
+                    let images: Vec<SelectedItem> = entries
+                        .into_iter()
+                        .filter(|e| e.is_image)
+                        .map(|e| SelectedItem {
+                            path: e.path,
+                            name: e.name,
+                            is_dir: false,
+                            is_image: true,
+                        })
+                        .collect();
+                    let n = images.len();
+                    self.checked.update(|list| {
+                        for item in images {
+                            if !list.iter().any(|x| x.path == item.path) {
+                                list.push(item);
+                            }
+                        }
+                    });
+                    self.status.set(if n == 0 {
+                        "当前目录没有图片".into()
+                    } else {
+                        format!("已全选当前目录 {n} 张")
+                    });
+                }
+                Err(e) => self.status.set(format!("全选失败：{e}")),
+            }
+            self.busy.set(false);
+        });
+    }
+
+    pub fn uncheck_all(self) {
+        if self.checked.get().is_empty() {
+            return;
+        }
+        self.checked.set(Vec::new());
+        self.status.set("已取消全选".into());
     }
 
     fn set_clipboard(self, items: Vec<ClipboardItem>, mode: ClipboardMode) {
@@ -267,12 +273,7 @@ impl ExplorerState {
 
     fn retarget_path(self, old: &str, new: &str) {
         let map = |path: &str| rewrite_prefix(path, old, new);
-        let file_name = |path: &str| {
-            path.rsplit('/')
-                .next()
-                .unwrap_or(path)
-                .to_string()
-        };
+        let file_name = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
 
         if let Some(v) = self.viewed.get() {
             let nv = map(&v);
@@ -382,8 +383,7 @@ impl ExplorerState {
         if self.selected.get().as_ref().map(|s| s.path.as_str()) == Some(path) {
             self.selected.set(None);
         }
-        self.checked
-            .update(|list| list.retain(|i| i.path != path));
+        self.checked.update(|list| list.retain(|i| i.path != path));
         if let Some(clip) = self.clipboard.get() {
             let items: Vec<_> = clip
                 .items
@@ -399,257 +399,5 @@ impl ExplorerState {
                 }));
             }
         }
-    }
-}
-
-pub fn shell(options: LeptosOptions) -> impl IntoView {
-    view! {
-        <!DOCTYPE html>
-        <html lang="zh-CN">
-            <head>
-                <meta charset="utf-8"/>
-                <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <AutoReload options=options.clone()/>
-                <HydrationScripts options/>
-                <MetaTags/>
-            </head>
-            <body>
-                <App/>
-            </body>
-        </html>
-    }
-}
-
-#[component]
-pub fn App() -> impl IntoView {
-    provide_meta_context();
-
-    view! {
-        <Stylesheet id="leptos" href="/pkg/pic-viewer.css"/>
-        <Title text="Pic Viewer"/>
-        <Router>
-            <main>
-                <Routes fallback=|| view! { <p class="not-found">"页面不存在"</p> }>
-                    <Route path=StaticSegment("") view=Explorer/>
-                </Routes>
-            </main>
-        </Router>
-    }
-}
-
-#[component]
-fn Explorer() -> impl IntoView {
-    let state = ExplorerState {
-        selected: RwSignal::new(None),
-        clipboard: RwSignal::new(None),
-        checked: RwSignal::new(Vec::new()),
-        viewed: RwSignal::new(None),
-        refresh: RwSignal::new(0),
-        status: RwSignal::new("就绪".into()),
-        confirm_delete: RwSignal::new(None),
-        rename_target: RwSignal::new(None),
-        rename_draft: RwSignal::new(String::new()),
-        busy: RwSignal::new(false),
-    };
-    provide_context(state);
-
-    let handle = window_event_listener(ev::keydown, move |ev: ev::KeyboardEvent| {
-        if state.rename_target.get_untracked().is_some() {
-            if ev.key() == "Escape" {
-                state.rename_target.set(None);
-            }
-            return;
-        }
-        if state.confirm_delete.get_untracked().is_some() {
-            if ev.key() == "Escape" {
-                state.confirm_delete.set(None);
-            }
-            return;
-        }
-        let ctrl = ev.ctrl_key() || ev.meta_key();
-        match (ctrl, ev.key().as_str()) {
-            (true, "c") => {
-                ev.prevent_default();
-                state.copy_selected();
-            }
-            (true, "x") => {
-                ev.prevent_default();
-                state.cut_selected();
-            }
-            (true, "v") => {
-                ev.prevent_default();
-                state.paste_clipboard();
-            }
-            (false, "F2") => {
-                ev.prevent_default();
-                state.request_rename();
-            }
-            (false, "Delete") => state.request_delete(),
-            _ => {}
-        }
-    });
-    on_cleanup(move || drop(handle));
-
-    view! {
-        <div class="explorer">
-            <header class="app-header">
-                <div class="brand">
-                    <span class="brand-mark">"▣"</span>
-                    <span>"Pic Viewer"</span>
-                </div>
-                <RootLabel/>
-                <div class="header-hint">"Ctrl+C 复制 · Ctrl+X 剪切 · Ctrl+V 粘贴 · F2 重命名 · Delete 删除"</div>
-            </header>
-            <div class="workspace">
-                <FilePane/>
-                <ImageViewer/>
-            </div>
-            <footer class="status-bar">
-                <span class="status-text">{move || state.status.get()}</span>
-                <span class="status-sel">
-                    {move || {
-                        let current = state
-                            .selected
-                            .get()
-                            .map(|s| {
-                                if s.path.is_empty() {
-                                    "当前：/".into()
-                                } else {
-                                    format!("当前：/{}", s.path)
-                                }
-                            })
-                            .unwrap_or_else(|| "未选择".into());
-                        let n = state.checked.get().len();
-                        if n == 0 {
-                            current
-                        } else {
-                            format!("{current} · 已勾选 {n} 张")
-                        }
-                    }}
-                </span>
-            </footer>
-            <ConfirmDelete/>
-            <RenameDialog/>
-        </div>
-    }
-}
-
-#[component]
-fn RootLabel() -> impl IntoView {
-    let info = Resource::new(|| (), |_| async move { crate::fs_api::get_root_info().await });
-    view! {
-        <div class="root-label">
-            <span class="muted">"托管目录"</span>
-            <Suspense fallback=|| view! { <code>"…"</code> }>
-                {move || {
-                    info.get().map(|res| match res {
-                        Ok(path) => view! { <code>{path}</code> }.into_any(),
-                        Err(_) => view! { <code>"PIC_ROOT"</code> }.into_any(),
-                    })
-                }}
-            </Suspense>
-        </div>
-    }
-}
-
-#[component]
-fn ConfirmDelete() -> impl IntoView {
-    let state = expect_context::<ExplorerState>();
-
-    view! {
-        <Show when=move || state.confirm_delete.get().is_some()>
-            <div class="modal-backdrop" on:click=move |_| state.confirm_delete.set(None)>
-                <div class="modal" on:click=move |ev| ev.stop_propagation()>
-                    <h2>"确认删除"</h2>
-                    <p>
-                        "将永久删除 "
-                        <strong>
-                            {move || {
-                                match state.confirm_delete.get().as_deref() {
-                                    Some([one]) => one.name.clone(),
-                                    Some(items) => format!("{} 项", items.len()),
-                                    None => String::new(),
-                                }
-                            }}
-                        </strong>
-                        " ，此操作不可恢复。"
-                    </p>
-                    <div class="modal-actions">
-                        <button class="btn" on:click=move |_| state.confirm_delete.set(None)>
-                            "取消"
-                        </button>
-                        <button class="btn btn-danger" on:click=move |_| state.confirm_delete_selected()>
-                            "删除"
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </Show>
-    }
-}
-
-#[component]
-fn RenameDialog() -> impl IntoView {
-    let state = expect_context::<ExplorerState>();
-    let input_ref = NodeRef::<leptos::html::Input>::new();
-
-    Effect::new(move |_| {
-        if state.rename_target.get().is_none() {
-            return;
-        }
-        if let Some(input) = input_ref.get() {
-            let _ = input.focus();
-            input.select();
-        }
-    });
-
-    view! {
-        <Show when=move || state.rename_target.get().is_some()>
-            <div class="modal-backdrop" on:click=move |_| state.rename_target.set(None)>
-                <div class="modal" on:click=move |ev| ev.stop_propagation()>
-                    <h2>"重命名"</h2>
-                    <p>
-                        {move || {
-                            state
-                                .rename_target
-                                .get()
-                                .map(|item| {
-                                    if item.is_dir {
-                                        format!("文件夹：{}", item.name)
-                                    } else {
-                                        format!("文件：{}", item.name)
-                                    }
-                                })
-                                .unwrap_or_default()
-                        }}
-                    </p>
-                    <input
-                        node_ref=input_ref
-                        class="modal-input"
-                        type="text"
-                        prop:value=move || state.rename_draft.get()
-                        on:input=move |ev| state.rename_draft.set(event_target_value(&ev))
-                        on:keydown=move |ev: leptos::ev::KeyboardEvent| {
-                            if ev.key() == "Enter" {
-                                ev.prevent_default();
-                                state.confirm_rename();
-                            }
-                        }
-                    />
-                    <div class="modal-actions">
-                        <button class="btn" on:click=move |_| state.rename_target.set(None)>
-                            "取消"
-                        </button>
-                        <button
-                            class="btn"
-                            disabled=move || state.busy.get()
-                            on:click=move |_| state.confirm_rename()
-                        >
-                            "确定"
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </Show>
     }
 }
