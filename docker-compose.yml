@@ -1,0 +1,32 @@
+# 本机用 Podman 调试 Pic Viewer。
+# 把 test/pic 挂到容器 /data，对应应用的 PIC_ROOT。
+#
+# 启动（在仓库根目录）：
+#   podman compose -f podman-compose.yml up --build
+#   或
+#   podman-compose -f podman-compose.yml up --build
+#
+# 浏览器打开 http://127.0.0.1:3020
+# （容器内仍是 3000；宿主机 3000 常被占用，所以映射到 3020）
+
+services:
+  pic-viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: localhost/pic-viewer:local
+    container_name: pic-viewer-debug
+    ports:
+      - "3020:3000"
+    environment:
+      PIC_ROOT: /data
+      LEPTOS_SITE_ADDR: 0.0.0.0:3000
+      LEPTOS_SITE_ROOT: /app/site
+      LEPTOS_OUTPUT_NAME: pic-viewer
+      LEPTOS_SITE_PKG_DIR: pkg
+    volumes:
+      # :Z 给 SELinux 环境用；CachyOS 上一般无影响
+      - ./test/pic:/data:Z
+    # 根less Podman 下让容器 uid 1000 对齐宿主机用户，便于复制/删除测试图
+    userns_mode: keep-id
+    restart: "no"

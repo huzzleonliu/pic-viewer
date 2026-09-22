@@ -1,0 +1,7 @@
+target
+.git
+.gitignore
+pics
+k8s
+README.md
+**/*.md

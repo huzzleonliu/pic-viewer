@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pic-viewer-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pic-viewer
+  labels:
+    app: pic-viewer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pic-viewer
+  template:
+    metadata:
+      labels:
+        app: pic-viewer
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: pic-viewer
+          image: pic-viewer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PIC_ROOT
+              value: /data
+            - name: LEPTOS_SITE_ROOT
+              value: /app/site
+            - name: LEPTOS_SITE_ADDR
+              value: 0.0.0.0:3000
+            - name: LEPTOS_OUTPUT_NAME
+              value: pic-viewer
+            - name: LEPTOS_SITE_PKG_DIR
+              value: pkg
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pic-viewer-data
+          # 若要直接接管节点上的目录，改为：
+          # hostPath:
+          #   path: /mnt/photos
+          #   type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pic-viewer
+spec:
+  selector:
+    app: pic-viewer
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
