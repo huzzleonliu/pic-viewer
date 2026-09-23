@@ -14,6 +14,7 @@ impl ExplorerState {
         name: String,
         is_dir: bool,
         is_image: bool,
+        is_text: bool,
         on: bool,
     ) {
         if path.is_empty() {
@@ -27,11 +28,13 @@ impl ExplorerState {
                     name,
                     is_dir,
                     is_image,
+                    is_text,
                 }),
                 (true, Some(i)) => {
                     list[i].name = name;
                     list[i].is_dir = is_dir;
                     list[i].is_image = is_image;
+                    list[i].is_text = is_text;
                 }
                 (false, Some(i)) => {
                     list.remove(i);
@@ -42,7 +45,7 @@ impl ExplorerState {
     }
 
     pub fn set_image_checked(self, path: String, name: String, on: bool) {
-        self.set_checked(path, name, false, true, on);
+        self.set_checked(path, name, false, true, false, on);
     }
 
     pub fn check_all_current(self) {
@@ -69,6 +72,7 @@ impl ExplorerState {
                             name: e.name,
                             is_dir: e.is_dir,
                             is_image: e.is_image,
+                            is_text: e.is_text,
                         })
                         .collect();
                     let n = items.len();
@@ -241,6 +245,7 @@ impl ExplorerState {
                     .to_string();
                 self.selected.set(Some(SelectedItem {
                     is_image: !item.is_dir && is_image_name(&name),
+                    is_text: false,
                     path: new_path,
                     name,
                     is_dir: item.is_dir,
@@ -292,6 +297,7 @@ impl ExplorerState {
                         name: name.clone(),
                         is_dir: true,
                         is_image: false,
+                        is_text: false,
                     }));
                     self.mkdir_parent.set(None);
                     self.refresh.update(|n| *n += 1);

@@ -204,6 +204,7 @@ fn RootTree() -> impl IntoView {
                 name: "/".into(),
                 is_dir: true,
                 is_image: false,
+                is_text: false,
             }));
         }
     });
@@ -247,6 +248,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                 name: name.clone(),
                 is_dir,
                 is_image,
+                is_text,
             }));
             if is_image {
                 state.viewed.set(Some(path.clone()));
@@ -276,6 +278,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                     name: name.clone(),
                     is_dir,
                     is_image,
+                    is_text,
                 }));
             }
         }
@@ -292,6 +295,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                     name: name.clone(),
                     is_dir,
                     is_image,
+                    is_text,
                 }));
             }
         }
@@ -352,6 +356,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                                 name_check.clone(),
                                 is_dir,
                                 is_image,
+                                is_text,
                                 event_target_checked(&ev),
                             );
                         }

@@ -104,6 +104,25 @@ body {
   color: #fff;
 }
 
+.header-mode {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  user-select: none;
+}
+
+.header-sep {
+  color: var(--muted);
+  font-size: 0.82rem;
+  user-select: none;
+  padding: 0 0.05rem;
+}
+
+.header-toggle-group {
+  display: contents;
+}
+
 .workspace {
   display: flex;
   min-width: 0;
@@ -848,6 +867,108 @@ body {
 
 .export-bar .filter-apply {
   margin-left: auto;
+}
+
+.text-editor {
+  background: var(--bg);
+}
+
+.text-editor.is-light {
+  background: #f4f1ea;
+  color: #1c1c1c;
+}
+
+.text-editor.is-light .viewer-toolbar {
+  background: #ebe6dc;
+  border-bottom-color: #d4cfc4;
+  color: #1c1c1c;
+}
+
+.text-editor.is-light .btn {
+  background: #fff;
+  color: #1c1c1c;
+  border-color: #c8c2b6;
+}
+
+.text-editor.is-light .btn:hover:not(:disabled) {
+  border-color: #6f8fd6;
+  color: #1c1c1c;
+}
+
+.text-editor.is-light .btn.is-active {
+  border-color: #6f8fd6;
+  background: rgba(122, 162, 255, 0.22);
+  color: #1c1c1c;
+}
+
+.text-editor.is-light .viewer-name,
+.text-editor.is-light .zoom-label,
+.text-editor.is-light .mark-label,
+.text-editor.is-light .orig-check {
+  color: #5c564c;
+}
+
+.editor-settings-bar {
+  background: #141820;
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.editor-gutter {
+  flex: 0 0 auto;
+  min-width: 3.2rem;
+  margin: 0;
+  padding: 0.8rem 0.55rem 2rem 0.7rem;
+  overflow: hidden;
+  text-align: right;
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Code", "Noto Sans Mono", monospace;
+  line-height: 1.55;
+  user-select: none;
+  white-space: pre;
+  border-right: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.text-editor.is-light .editor-gutter {
+  color: #8a8376;
+  background: #e8e2d6;
+  border-right-color: #d4cfc4;
+}
+
+.editor-textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  padding: 0.8rem 1rem 2rem;
+  background: transparent;
+  color: inherit;
+  font-family: ui-monospace, "Cascadia Code", "Noto Sans Mono", monospace;
+  line-height: 1.55;
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+
+.editor-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  padding: 1.5rem;
+}
+
+.editor-error {
+  color: var(--danger);
 }
 
 @media (max-width: 800px) {

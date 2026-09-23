@@ -7,6 +7,31 @@ pub enum FileKind {
     Other,
 }
 
+pub fn decode_text(bytes: &[u8]) -> String {
+    if bytes.starts_with(b"\xff\xfe") {
+        utf16_lossy(&bytes[2..], false)
+    } else if bytes.starts_with(b"\xfe\xff") {
+        utf16_lossy(&bytes[2..], true)
+    } else {
+        let rest = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+        String::from_utf8_lossy(rest).into_owned()
+    }
+}
+
+fn utf16_lossy(bytes: &[u8], big_endian: bool) -> String {
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| {
+            if big_endian {
+                u16::from_be_bytes([c[0], c[1]])
+            } else {
+                u16::from_le_bytes([c[0], c[1]])
+            }
+        })
+        .collect();
+    String::from_utf16_lossy(&units)
+}
+
 pub fn kind_from_header(buf: &[u8]) -> FileKind {
     if let Some(kind) = binary_kind(buf) {
         return kind;
@@ -115,7 +140,7 @@ pub fn sniff_file(path: &std::path::Path) -> FileKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{kind_from_header, FileKind};
+    use super::{decode_text, kind_from_header, FileKind};
 
     #[test]
     fn png_jpeg_gif_webp() {
@@ -164,5 +189,13 @@ mod tests {
     #[test]
     fn utf16_bom_is_text() {
         assert_eq!(kind_from_header(b"\xff\xfeh\0i\0"), FileKind::Text);
+    }
+
+    #[test]
+    fn decode_utf8_utf16_and_bom() {
+        assert_eq!(decode_text("备注".as_bytes()), "备注");
+        assert_eq!(decode_text(b"\xef\xbb\xbfhi"), "hi");
+        assert_eq!(decode_text(b"\xff\xfeh\0i\0"), "hi");
+        assert_eq!(decode_text(b"\xfe\xff\0h\0i"), "hi");
     }
 }

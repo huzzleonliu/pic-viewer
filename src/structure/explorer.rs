@@ -8,6 +8,7 @@ pub struct SelectedItem {
     pub name: String,
     pub is_dir: bool,
     pub is_image: bool,
+    pub is_text: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +63,10 @@ pub struct ExplorerState {
     pub show_stars: RwSignal<bool>,
     pub show_filter: RwSignal<bool>,
     pub show_export: RwSignal<bool>,
+    pub show_editor_settings: RwSignal<bool>,
+    pub editor_font_size: RwSignal<u32>,
+    pub editor_light: RwSignal<bool>,
+    pub editor_line_numbers: RwSignal<bool>,
     pub filter_paths: RwSignal<Option<Vec<String>>>,
     pub failure_report: RwSignal<Option<FailureReport>>,
     pub expanded_dirs: RwSignal<HashSet<String>>,
@@ -89,10 +94,18 @@ impl ExplorerState {
             show_stars: RwSignal::new(false),
             show_filter: RwSignal::new(false),
             show_export: RwSignal::new(false),
+            show_editor_settings: RwSignal::new(false),
+            editor_font_size: RwSignal::new(15),
+            editor_light: RwSignal::new(false),
+            editor_line_numbers: RwSignal::new(true),
             filter_paths: RwSignal::new(None),
             failure_report: RwSignal::new(None),
             expanded_dirs: RwSignal::new(HashSet::from([String::new()])),
         }
+    }
+
+    pub fn is_text_mode(self) -> bool {
+        self.selected.with(|s| s.as_ref().is_some_and(|item| item.is_text))
     }
 
     pub fn is_expanded(self, path: &str) -> bool {

@@ -30,23 +30,33 @@ PIC_VIEWER_IMAGE=ghcr.io/huzzleonliu/pic-viewer:v0.0.1 podman compose up -d
 
 ## 开发（热更新）
 
-需要本机 Rust 工具链。imgproxy 用 `dev.docker-compose.yml` 起在宿主机 8080，应用用 `cargo leptos watch`，改代码会自动重编。
+`dev.docker-compose.yml` 起 imgproxy，并在容器里跑 `cargo leptos watch`：源码挂进去，改文件会自动重编。不需要本机安装 Rust。
 
 ```bash
-rustup target add wasm32-unknown-unknown
-cargo install cargo-leptos --locked
-
 podman compose down   # 避免和生产栈抢 3020
-podman compose -f dev.docker-compose.yml up -d
+podman compose -f dev.docker-compose.yml up --build
+```
 
+打开 http://127.0.0.1:3020。第一次会构建开发镜像并完整编译，之后 crates / `target` 缓存在仓库的 `.dev-cache/` 里。建议前台 `up`，才能直接看到编译输出；后台跑的话用 `podman compose -f dev.docker-compose.yml logs -f pic-viewer`。
+
+换相册：
+
+```bash
+PIC_DIR=/path/to/photos podman compose -f dev.docker-compose.yml up --build
+```
+
+`PIC_DIR` 会同时挂给应用（`PIC_ROOT=/data`）和 imgproxy，相对路径才能对上。
+
+若只想在本机跑 `cargo leptos watch`：
+
+```bash
+podman compose -f dev.docker-compose.yml up imgproxy
 export PIC_ROOT="$(pwd)/test/pic"
 export IMGPROXY_URL="http://127.0.0.1:8080"
 cargo leptos watch
 ```
 
-打开 http://127.0.0.1:3020 （`Cargo.toml` 里 `site-addr` 已是 3020）。`PIC_ROOT` 必须和 compose 里挂给 imgproxy 的目录一致；换相册时两边一起改 `PIC_DIR` / `PIC_ROOT`。
-
-不设 `IMGPROXY_URL` 时 `/thumb`、`/preview` 会回退为原图，可以不启 imgproxy，但胶片条会按原图加载。
+不设 `IMGPROXY_URL` 时 `/thumb`、`/preview` 会回退为原图，胶片条会按原图加载。
 
 ## 环境变量
 

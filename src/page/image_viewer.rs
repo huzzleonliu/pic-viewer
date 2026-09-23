@@ -108,6 +108,7 @@ pub fn ImageViewer() -> impl IntoView {
                 name: entry.name.clone(),
                 is_dir: false,
                 is_image: true,
+                is_text: false,
             }));
         }
     };
@@ -125,7 +126,7 @@ pub fn ImageViewer() -> impl IntoView {
     };
 
     view! {
-        <section class="viewer">
+        <section class="viewer" class:panel-off=move || state.is_text_mode()>
             <div class="viewer-toolbar" class:panel-off=move || !state.show_adjust.get()>
                 <button class="btn" on:click=move |_| zoom_by(1.0 / 1.2) title="缩小">"−"</button>
                 <span class="zoom-label">{move || format!("{}%", (zoom.get() * 100.0).round())}</span>
@@ -902,6 +903,7 @@ fn Thumb(entry: FsEntry) -> impl IntoView {
                 name: name.clone(),
                 is_dir: false,
                 is_image: true,
+                is_text: false,
             }));
         }
     };

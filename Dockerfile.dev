@@ -1,0 +1,26 @@
+# 开发镜像：带 Rust 工具链和 cargo-leptos，源码在 compose 里挂进来，
+# 容器内跑 `cargo leptos watch` 做即时编译。
+FROM rust:bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add wasm32-unknown-unknown \
+    && cargo install cargo-leptos --locked
+
+WORKDIR /app
+COPY rust-toolchain.toml ./
+RUN rustup show \
+    && rustup target add wasm32-unknown-unknown
+
+# cargo-leptos / rustc 仍在镜像的 /usr/local/cargo；crates 缓存挂到 /cache/cargo，
+# 避免覆盖安装好的 cargo-leptos。
+ENV CARGO_HOME=/cache/cargo \
+    CARGO_TERM_COLOR=always \
+    PATH="/usr/local/cargo/bin:/cache/cargo/bin:${PATH}"
+
+RUN mkdir -p /cache/cargo /app/target \
+    && chmod -R a+rwX /cache /usr/local/cargo /usr/local/rustup
+
+EXPOSE 3020 3021
+CMD ["cargo", "leptos", "watch"]

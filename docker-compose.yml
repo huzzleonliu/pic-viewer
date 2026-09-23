@@ -10,7 +10,7 @@
 # 指定应用镜像：
 #   PIC_VIEWER_IMAGE=ghcr.io/huzzleonliu/pic-viewer:v0.0.1 podman compose up -d
 #
-# 开发热更新请用：podman compose -f dev.docker-compose.yml up -d
+# 开发热更新请用：podman compose -f dev.docker-compose.yml up --build
 
 name: pic-viewer
 

@@ -10,7 +10,8 @@ pub mod sniff;
 pub use export::export_checked;
 pub use filter::{apply_meta_filter, get_meta_index_status, start_meta_index};
 pub use fs::{
-    create_dir, delete_entry, get_root_info, list_dir, paste_entry, rename_entry,
+    create_dir, delete_entry, get_root_info, list_dir, paste_entry, read_text_file, rename_entry,
+    write_text_file,
 };
 pub use path::{
     is_image_name, join_rel, media_url, parent_path, preview_url, rewrite_prefix, thumb_url,
@@ -20,7 +21,7 @@ pub use rating::{
     batch_mark_images, get_image_rating, get_image_tags, set_image_rating, set_image_tags,
 };
 pub use rotate::save_rotated_image;
-pub use sniff::{kind_from_header, FileKind};
+pub use sniff::{decode_text, kind_from_header, FileKind};
 
 #[cfg(feature = "ssr")]
 pub use export::serve_export;
