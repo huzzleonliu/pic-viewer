@@ -1,4 +1,4 @@
-use crate::function::fs::{delete_entry, list_dir, paste_entry, rename_entry};
+use crate::function::fs::{create_dir, delete_entry, list_dir, paste_entry, rename_entry};
 use crate::function::path::{is_image_name, parent_path, rewrite_prefix, validate_file_name};
 use crate::structure::{Clipboard, ClipboardItem, ClipboardMode, ExplorerState, SelectedItem};
 use leptos::prelude::*;
@@ -8,22 +8,41 @@ impl ExplorerState {
         self.checked.get().iter().any(|i| i.path == path)
     }
 
-    pub fn set_image_checked(self, path: String, name: String, on: bool) {
+    pub fn set_checked(
+        self,
+        path: String,
+        name: String,
+        is_dir: bool,
+        is_image: bool,
+        on: bool,
+    ) {
+        if path.is_empty() {
+            return;
+        }
         self.checked.update(|list| {
             let idx = list.iter().position(|x| x.path == path);
             match (on, idx) {
                 (true, None) => list.push(SelectedItem {
                     path,
                     name,
-                    is_dir: false,
-                    is_image: true,
+                    is_dir,
+                    is_image,
                 }),
+                (true, Some(i)) => {
+                    list[i].name = name;
+                    list[i].is_dir = is_dir;
+                    list[i].is_image = is_image;
+                }
                 (false, Some(i)) => {
                     list.remove(i);
                 }
                 _ => {}
             }
         });
+    }
+
+    pub fn set_image_checked(self, path: String, name: String, on: bool) {
+        self.set_checked(path, name, false, true, on);
     }
 
     pub fn check_all_current(self) {
@@ -42,28 +61,28 @@ impl ExplorerState {
         leptos::task::spawn_local(async move {
             match list_dir(dir).await {
                 Ok(entries) => {
-                    let images: Vec<SelectedItem> = entries
+                    let items: Vec<SelectedItem> = entries
                         .into_iter()
-                        .filter(|e| e.is_image)
+                        .filter(|e| !e.path.is_empty())
                         .map(|e| SelectedItem {
                             path: e.path,
                             name: e.name,
-                            is_dir: false,
-                            is_image: true,
+                            is_dir: e.is_dir,
+                            is_image: e.is_image,
                         })
                         .collect();
-                    let n = images.len();
+                    let n = items.len();
                     self.checked.update(|list| {
-                        for item in images {
+                        for item in items {
                             if !list.iter().any(|x| x.path == item.path) {
                                 list.push(item);
                             }
                         }
                     });
                     self.status.set(if n == 0 {
-                        "当前目录没有图片".into()
+                        "当前目录没有可勾选项目".into()
                     } else {
-                        format!("已全选当前目录 {n} 张")
+                        format!("已全选当前目录 {n} 项")
                     });
                 }
                 Err(e) => self.status.set(format!("全选失败：{e}")),
@@ -72,6 +91,24 @@ impl ExplorerState {
         });
     }
 
+    pub fn current_dir_rel(self) -> String {
+        match self.viewed.get() {
+            Some(path) => parent_path(&path),
+            None => match self.selected.get() {
+                Some(s) if s.is_dir => s.path,
+                Some(s) => parent_path(&s.path),
+                None => String::new(),
+            },
+        }
+    }
+
+    pub fn selected_dir_rel(self) -> String {
+        match self.selected.get() {
+            Some(s) if s.is_dir => s.path,
+            Some(s) => parent_path(&s.path),
+            None => String::new(),
+        }
+    }
     pub fn uncheck_all(self) {
         if self.checked.get().is_empty() {
             return;
@@ -131,7 +168,7 @@ impl ExplorerState {
     pub fn copy_checked(self) {
         let items = self.checked_clipboard_items();
         if items.is_empty() {
-            self.status.set("未勾选图片".into());
+            self.status.set("未勾选项目".into());
             return;
         }
         self.set_clipboard(items, ClipboardMode::Copy);
@@ -140,7 +177,7 @@ impl ExplorerState {
     pub fn cut_checked(self) {
         let items = self.checked_clipboard_items();
         if items.is_empty() {
-            self.status.set("未勾选图片".into());
+            self.status.set("未勾选项目".into());
             return;
         }
         self.set_clipboard(items, ClipboardMode::Cut);
@@ -223,6 +260,49 @@ impl ExplorerState {
         });
     }
 
+    pub fn request_mkdir(self) {
+        self.mkdir_draft.set("新建文件夹".into());
+        self.mkdir_parent.set(Some(self.selected_dir_rel()));
+    }
+
+    pub fn confirm_mkdir(self) {
+        let Some(parent) = self.mkdir_parent.get() else {
+            return;
+        };
+        if self.busy.get() {
+            return;
+        }
+        let name = self.mkdir_draft.get();
+        if let Err(err) = validate_file_name(&name) {
+            self.status.set(err);
+            return;
+        }
+        let name = name.trim().to_string();
+        self.busy.set(true);
+        leptos::task::spawn_local(async move {
+            match create_dir(parent, name).await {
+                Ok(new_path) => {
+                    let name = new_path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(new_path.as_str())
+                        .to_string();
+                    self.selected.set(Some(SelectedItem {
+                        path: new_path,
+                        name: name.clone(),
+                        is_dir: true,
+                        is_image: false,
+                    }));
+                    self.mkdir_parent.set(None);
+                    self.refresh.update(|n| *n += 1);
+                    self.status.set(format!("已新建目录：{name}"));
+                }
+                Err(e) => self.status.set(format!("新建目录失败：{e}")),
+            }
+            self.busy.set(false);
+        });
+    }
+
     pub fn request_rename(self) {
         if let Some(item) = self.selected.get() {
             if item.path.is_empty() {
@@ -295,15 +375,14 @@ impl ExplorerState {
             }
         }
         self.checked.update(|list| {
-            list.retain_mut(|item| {
+            for item in list.iter_mut() {
                 let np = map(&item.path);
                 if np != item.path {
                     item.name = file_name(&np);
-                    item.is_image = is_image_name(&item.name);
+                    item.is_image = !item.is_dir && is_image_name(&item.name);
                     item.path = np;
                 }
-                item.is_image
-            });
+            }
         });
         if let Some(mut clip) = self.clipboard.get() {
             for item in &mut clip.items {
@@ -315,6 +394,16 @@ impl ExplorerState {
             }
             self.clipboard.set(Some(clip));
         }
+        self.expanded_dirs.update(|set| {
+            let keys: Vec<String> = set.iter().cloned().collect();
+            for k in keys {
+                let nk = map(&k);
+                if nk != k {
+                    set.remove(&k);
+                    set.insert(nk);
+                }
+            }
+        });
     }
 
     pub fn request_delete(self) {
@@ -330,7 +419,7 @@ impl ExplorerState {
     pub fn request_delete_checked(self) {
         let items = self.checked.get();
         if items.is_empty() {
-            self.status.set("未勾选图片".into());
+            self.status.set("未勾选项目".into());
             return;
         }
         self.confirm_delete.set(Some(items));
@@ -398,6 +487,12 @@ impl ExplorerState {
                     items,
                 }));
             }
+        }
+        if !path.is_empty() {
+            let prefix = format!("{path}/");
+            self.expanded_dirs.update(|set| {
+                set.retain(|p| p != path && !p.starts_with(&prefix));
+            });
         }
     }
 }

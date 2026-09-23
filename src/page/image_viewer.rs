@@ -1,6 +1,7 @@
 use crate::function::{
-    apply_meta_filter, get_image_rating, get_image_tags, get_meta_index_status, list_dir, media_url,
-    parent_path, save_rotated_image, set_image_rating, set_image_tags, start_meta_index,
+    apply_meta_filter, batch_mark_images, export_checked, get_image_rating, get_image_tags,
+    get_meta_index_status, list_dir, media_url, parent_path, preview_url, save_rotated_image, set_image_rating,
+    set_image_tags, start_meta_index, thumb_url,
 };
 use crate::structure::{ExplorerState, FsEntry, SelectedItem};
 use leptos::ev;
@@ -18,6 +19,7 @@ pub fn ImageViewer() -> impl IntoView {
     let last_pos = RwSignal::new((0.0_f64, 0.0_f64));
     let loaded = RwSignal::new(false);
     let failed = RwSignal::new(false);
+    let view_original = RwSignal::new(false);
 
     Effect::new(move |_| {
         state.viewed.track();
@@ -158,6 +160,18 @@ pub fn ImageViewer() -> impl IntoView {
                             .unwrap_or_else(|| "未选择图片".into())
                     }}
                 </span>
+                <label class="orig-check" title="勾选后加载本地原图；不勾选则由 imgproxy 压缩预览">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || view_original.get()
+                        on:change=move |ev| {
+                            view_original.set(event_target_checked(&ev));
+                            loaded.set(false);
+                            failed.set(false);
+                        }
+                    />
+                    "原图"
+                </label>
             </div>
             <div
                 class="stage"
@@ -199,7 +213,12 @@ pub fn ImageViewer() -> impl IntoView {
                         let src = {
                             let path = path.clone();
                             move || {
-                                format!("{}?v={}", media_url(&path), state.media_rev.get())
+                                let url = if view_original.get() {
+                                    media_url(&path)
+                                } else {
+                                    preview_url(&path)
+                                };
+                                format!("{}?v={}", url, state.media_rev.get())
                             }
                         };
                         let checked_path = path.clone();
@@ -276,6 +295,7 @@ pub fn ImageViewer() -> impl IntoView {
             </div>
             <FilterBar dir=gallery_dir/>
             <MarkBar/>
+            <ExportBar/>
             <Suspense fallback=|| ()>
                 {move || {
                     gallery.get().and_then(|res| match res {
@@ -288,18 +308,22 @@ pub fn ImageViewer() -> impl IntoView {
                                     .collect::<Vec<_>>(),
                                 None => entries,
                             };
-                            Some(
+                            Some({
+                                let shown = shown.clone();
                                 view! {
-                                    <div class="filmstrip-rail" class:panel-off=move || !state.show_thumbnails.get()>
-                                        <div class="filmstrip">
-                                            {shown
-                                                .into_iter()
-                                                .map(|entry| view! { <Thumb entry/> })
-                                                .collect_view()}
+                                    <Show when=move || state.show_thumbnails.get()>
+                                        <div class="filmstrip-rail">
+                                            <div class="filmstrip">
+                                                {shown
+                                                    .clone()
+                                                    .into_iter()
+                                                    .map(|entry| view! { <Thumb entry/> })
+                                                    .collect_view()}
+                                            </div>
                                         </div>
-                                    </div>
-                                },
-                            )
+                                    </Show>
+                                }
+                            })
                         }
                         Err(_) => None,
                     })
@@ -307,6 +331,143 @@ pub fn ImageViewer() -> impl IntoView {
             </Suspense>
         </section>
     }.into_any()
+}
+
+fn start_download(url: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            let _ = window.location().set_href(url);
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = url;
+    }
+}
+
+#[component]
+fn ExportBar() -> impl IntoView {
+    let state = expect_context::<ExplorerState>();
+    let dest = RwSignal::new("download".to_string());
+    let dest_dir = RwSignal::new(String::new());
+    let format = RwSignal::new("jpeg".to_string());
+    let exporting = RwSignal::new(false);
+
+    view! {
+        <div class="export-bar" class:panel-off=move || !state.show_export.get()>
+            <span class="mark-label">"导出勾选"</span>
+            <span class="mark-label">"导出到"</span>
+            <select
+                class="filter-select"
+                prop:value=move || dest.get()
+                on:change=move |ev| dest.set(event_target_value(&ev))
+            >
+                <option value="download" selected>"下载到本机"</option>
+                <option value="current">"当前目录"</option>
+                <option value="dir">"特定目录"</option>
+            </select>
+            <Show when=move || dest.get() == "dir">
+                <input
+                    class="filter-tag-input export-dir-input"
+                    type="text"
+                    placeholder="相对托管目录，如 export/out"
+                    prop:value=move || dest_dir.get()
+                    on:input=move |ev| dest_dir.set(event_target_value(&ev))
+                />
+            </Show>
+            <span class="mark-label">"导出格式"</span>
+            <select
+                class="filter-select"
+                prop:value=move || format.get()
+                on:change=move |ev| format.set(event_target_value(&ev))
+            >
+                <option value="jpeg" selected>"JPEG"</option>
+                <option value="png">"PNG"</option>
+                <option value="webp">"WebP"</option>
+                <option value="gif">"GIF"</option>
+                <option value="bmp">"BMP"</option>
+                <option value="tiff">"TIFF"</option>
+            </select>
+            <button
+                class="btn filter-apply"
+                type="button"
+                title="导出已勾选图片"
+                disabled=move || {
+                    !state.checked.get().iter().any(|i| i.is_image)
+                        || exporting.get()
+                        || state.busy.get()
+                        || (dest.get() == "dir" && dest_dir.get().trim().is_empty())
+                }
+                on:click=move |_| {
+                    if exporting.get() || state.busy.get() {
+                        return;
+                    }
+                    let items: Vec<_> = state
+                        .checked
+                        .get()
+                        .into_iter()
+                        .filter(|i| i.is_image)
+                        .collect();
+                    if items.is_empty() {
+                        state.status.set("请先勾选图片".into());
+                        return;
+                    }
+                    let dest_mode = dest.get();
+                    let dest_dir_val = if dest_mode == "current" {
+                        state.current_dir_rel()
+                    } else {
+                        dest_dir.get()
+                    };
+                    if dest_mode == "dir" && dest_dir_val.trim().is_empty() {
+                        state.status.set("请填写导出目录".into());
+                        return;
+                    }
+                    let dest_api = if dest_mode == "download" {
+                        "download".to_string()
+                    } else {
+                        "dir".to_string()
+                    };
+                    let format = format.get();
+                    let n = items.len();
+                    let paths: Vec<String> = items.into_iter().map(|i| i.path).collect();
+                    exporting.set(true);
+                    state.busy.set(true);
+                    state.status.set(format!("正在导出 {n} 张…"));
+                    leptos::task::spawn_local(async move {
+                        match export_checked(paths, dest_api.clone(), dest_dir_val, format).await
+                        {
+                            Ok(report) => {
+                                if report.total == 0 {
+                                    state.status.set("请先勾选图片".into());
+                                } else if report.failures.is_empty() {
+                                    state.status.set(format!("已导出 {} 张", report.ok));
+                                } else {
+                                    let failed = report.failures.len();
+                                    state.status.set(format!(
+                                        "已导出 {}/{} 张，失败 {failed}",
+                                        report.ok, report.total
+                                    ));
+                                    state.report_failures("导出失败", report.failures);
+                                }
+                                if let Some(url) = report.download_url {
+                                    start_download(&url);
+                                }
+                                if dest_api == "dir" && report.ok > 0 {
+                                    state.refresh.update(|v| *v += 1);
+                                }
+                            }
+                            Err(e) => state.status.set(format!("导出失败：{e}")),
+                        }
+                        exporting.set(false);
+                        state.busy.set(false);
+                    });
+                }
+            >
+                "导出"
+            </button>
+        </div>
+    }
 }
 
 #[component]
@@ -603,6 +764,62 @@ fn MarkBar() -> impl IntoView {
                     }
                 />
             </div>
+            <button
+                class="btn mark-batch"
+                type="button"
+                title="把当前星标写入勾选图片，并把当前 tag 追加到各文件（文件里已有的不重复）"
+                disabled=move || {
+                    !state.checked.get().iter().any(|i| i.is_image)
+                        || busy.get()
+                        || state.busy.get()
+                }
+                on:click=move |_| {
+                    if busy.get() || state.busy.get() {
+                        return;
+                    }
+                    let items: Vec<_> = state
+                        .checked
+                        .get()
+                        .into_iter()
+                        .filter(|i| i.is_image)
+                        .collect();
+                    if items.is_empty() {
+                        state.status.set("请先勾选图片".into());
+                        return;
+                    }
+                    let rating = stars.get();
+                    let tags = tags.get();
+                    let n = items.len();
+                    let paths: Vec<String> = items.into_iter().map(|i| i.path).collect();
+                    busy.set(true);
+                    state.busy.set(true);
+                    state.status.set(format!("正在批量标记 {n} 张…"));
+                    leptos::task::spawn_local(async move {
+                        match batch_mark_images(paths, rating, tags).await {
+                            Ok(report) => {
+                                if report.total == 0 {
+                                    state.status.set("请先勾选图片".into());
+                                } else if report.failures.is_empty() {
+                                    state.status.set(format!("已批量标记 {} 张", report.ok));
+                                } else {
+                                    let failed = report.failures.len();
+                                    state.status.set(format!(
+                                        "已标记 {}/{} 张，失败 {failed}",
+                                        report.ok, report.total
+                                    ));
+                                    state.report_failures("批量标记失败", report.failures);
+                                }
+                                reload.update(|v| *v += 1);
+                            }
+                            Err(e) => state.status.set(format!("批量标记失败：{e}")),
+                        }
+                        busy.set(false);
+                        state.busy.set(false);
+                    });
+                }
+            >
+                "批量标记"
+            </button>
         </div>
     }
 }
@@ -667,7 +884,7 @@ fn Thumb(entry: FsEntry) -> impl IntoView {
     let name = entry.name.clone();
     let src = {
         let path = path.clone();
-        move || format!("{}?v={}", media_url(&path), state.media_rev.get())
+        move || format!("{}?v={}", thumb_url(&path), state.media_rev.get())
     };
     let path_active = path.clone();
     let path_checked_class = path.clone();
@@ -714,7 +931,7 @@ fn Thumb(entry: FsEntry) -> impl IntoView {
                 />
             </label>
             <button class="thumb-btn" type="button" on:click=open>
-                <img src=src alt=name.clone() draggable="false"/>
+                <img src=src alt=name.clone() draggable="false" loading="lazy" decoding="async"/>
                 <span class="thumb-name">{name.clone()}</span>
             </button>
         </div>

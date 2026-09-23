@@ -1,4 +1,5 @@
 use crate::function::get_root_info;
+use crate::page::copy_text::copy_plain_text;
 use crate::page::file_tree::FilePane;
 use crate::page::image_viewer::ImageViewer;
 use crate::structure::ExplorerState;
@@ -21,6 +22,7 @@ pub fn Explorer() -> impl IntoView {
                     <PanelToggle label="缩略图" on=state.show_thumbnails/>
                     <PanelToggle label="标记" on=state.show_stars/>
                     <PanelToggle label="筛选" on=state.show_filter/>
+                    <PanelToggle label="导出" on=state.show_export/>
                     <PanelToggle label="简单调整" on=state.show_adjust/>
                     <PanelToggle label="文件管理器" on=state.show_file_manager/>
                 </div>
@@ -48,13 +50,15 @@ pub fn Explorer() -> impl IntoView {
                         if n == 0 {
                             current
                         } else {
-                            format!("{current} · 已勾选 {n} 张")
+                            format!("{current} · 已勾选 {n} 项")
                         }
                     }}
                 </span>
             </footer>
             <ConfirmDelete/>
             <RenameDialog/>
+            <MkdirDialog/>
+            <FailureDialog/>
         </div>
     }.into_any()
 }
@@ -156,6 +160,151 @@ fn RenameDialog() -> impl IntoView {
             </div>
         </Show>
     }.into_any()
+}
+
+#[component]
+fn MkdirDialog() -> impl IntoView {
+    let state = expect_context::<ExplorerState>();
+
+    view! {
+        <Show when=move || state.mkdir_parent.get().is_some()>
+            <div class="modal-backdrop" on:click=move |_| state.mkdir_parent.set(None)>
+                <div class="modal" on:click=move |ev| ev.stop_propagation()>
+                    <h2>"新建目录"</h2>
+                    <p>
+                        {move || {
+                            match state.mkdir_parent.get().as_deref() {
+                                Some("") => "位置：/".into(),
+                                Some(path) => format!("位置：/{path}"),
+                                None => String::new(),
+                            }
+                        }}
+                    </p>
+                    <input
+                        class="modal-input"
+                        type="text"
+                        autofocus
+                        prop:value=move || state.mkdir_draft.get()
+                        on:input=move |ev| state.mkdir_draft.set(event_target_value(&ev))
+                    />
+                    <div class="modal-actions">
+                        <button class="btn" on:click=move |_| state.mkdir_parent.set(None)>
+                            "取消"
+                        </button>
+                        <button class="btn" on:click=move |_| state.confirm_mkdir()>
+                            "创建"
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Show>
+    }
+    .into_any()
+}
+
+#[component]
+fn FailureDialog() -> impl IntoView {
+    let state = expect_context::<ExplorerState>();
+    let copied = RwSignal::new(false);
+
+    Effect::new(move |_| {
+        state.failure_report.track();
+        copied.set(false);
+    });
+
+    view! {
+        <Show when=move || state.failure_report.get().is_some()>
+            <div
+                class="modal-backdrop"
+                on:click=move |_| {
+                    copied.set(false);
+                    state.failure_report.set(None);
+                }
+            >
+                <div class="modal modal-wide" on:click=move |ev| ev.stop_propagation()>
+                    <h2>
+                        {move || {
+                            state
+                                .failure_report
+                                .get()
+                                .map(|r| r.title)
+                                .unwrap_or_else(|| "失败列表".into())
+                        }}
+                    </h2>
+                    <p>
+                        {move || {
+                            state
+                                .failure_report
+                                .get()
+                                .map(|r| format!("共 {} 项失败", r.failures.len()))
+                                .unwrap_or_default()
+                        }}
+                    </p>
+                    <ul class="fail-list">
+                        {move || {
+                            state
+                                .failure_report
+                                .get()
+                                .map(|r| {
+                                    r.failures
+                                        .into_iter()
+                                        .map(|item| {
+                                            let file = if item.file.is_empty() {
+                                                "(未命名)".to_string()
+                                            } else {
+                                                item.file
+                                            };
+                                            view! {
+                                                <li>
+                                                    <code>{file}</code>
+                                                    <span class="fail-error">{item.error}</span>
+                                                </li>
+                                            }
+                                        })
+                                        .collect_view()
+                                })
+                        }}
+                    </ul>
+                    <div class="modal-actions">
+                        <button
+                            class="btn"
+                            type="button"
+                            on:click=move |_| {
+                                let Some(report) = state.failure_report.get() else {
+                                    return;
+                                };
+                                let list = report
+                                    .failures
+                                    .into_iter()
+                                    .map(|item| item.file)
+                                    .filter(|f| !f.is_empty())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                if copy_plain_text(&list) {
+                                    copied.set(true);
+                                    state.status.set("已复制失败文件列表".into());
+                                } else {
+                                    state.status.set("复制失败，请手动选择列表".into());
+                                }
+                            }
+                        >
+                            {move || if copied.get() { "已复制" } else { "复制文件列表" }}
+                        </button>
+                        <button
+                            class="btn"
+                            on:click=move |_| {
+                                copied.set(false);
+                                state.failure_report.set(None);
+                            }
+                        >
+                            "关闭"
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Show>
+    }
+    .into_any()
 }
 
 #[component]

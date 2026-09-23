@@ -48,12 +48,22 @@ pub fn rewrite_prefix(path: &str, old: &str, new: &str) -> String {
     }
 }
 
-pub fn media_url(rel: &str) -> String {
-    let encoded = rel
-        .split('/')
+fn encode_rel(rel: &str) -> String {
+    rel.split('/')
         .filter(|s| !s.is_empty())
         .map(|s| urlencoding::encode(s).into_owned())
         .collect::<Vec<_>>()
-        .join("/");
-    format!("/media/{encoded}")
+        .join("/")
+}
+
+pub fn media_url(rel: &str) -> String {
+    format!("/media/{}", encode_rel(rel))
+}
+
+pub fn thumb_url(rel: &str) -> String {
+    format!("/thumb/{}", encode_rel(rel))
+}
+
+pub fn preview_url(rel: &str) -> String {
+    format!("/preview/{}", encode_rel(rel))
 }

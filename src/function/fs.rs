@@ -139,10 +139,10 @@ mod server_fs {
 }
 
 #[cfg(feature = "ssr")]
-pub use server_fs::{mime_for, pic_root, resolve_path};
+pub use server_fs::{mime_for, pic_root, resolve_path, unique_dest};
 
 #[cfg(feature = "ssr")]
-use server_fs::{copy_recursively, to_rel, unique_dest};
+use server_fs::{copy_recursively, to_rel};
 
 #[server]
 pub async fn get_root_info() -> Result<String, ServerFnError> {
@@ -241,6 +241,25 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<String, Serv
 }
 
 #[server]
+pub async fn create_dir(parent: String, name: String) -> Result<String, ServerFnError> {
+    let name = name.trim().to_string();
+    crate::function::path::validate_file_name(&name).map_err(ServerFnError::new)?;
+    let parent_full = resolve_path(&parent).map_err(ServerFnError::new)?;
+    if !parent_full.is_dir() {
+        return Err(ServerFnError::new("父路径不是目录"));
+    }
+    let dest = parent_full.join(&name);
+    if !dest.starts_with(pic_root()) {
+        return Err(ServerFnError::new("路径越界"));
+    }
+    if dest.exists() {
+        return Err(ServerFnError::new("目标名称已存在"));
+    }
+    std::fs::create_dir(&dest).map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(to_rel(&dest))
+}
+
+#[server]
 pub async fn paste_entry(
     source: String,
     dest_dir: String,
@@ -335,4 +354,122 @@ pub async fn serve_media(
         }
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+#[cfg(feature = "ssr")]
+fn imgproxy_base() -> Option<String> {
+    let raw = std::env::var("IMGPROXY_URL").ok()?;
+    let base = raw.trim().trim_end_matches('/');
+    if base.is_empty() {
+        None
+    } else {
+        Some(base.to_string())
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn imgproxy_fetch_url(base: &str, rel: &str, processing: &str) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    let source = format!("local:///{}", rel.trim_start_matches('/'));
+    let encoded = URL_SAFE_NO_PAD.encode(source.as_bytes());
+    format!("{base}/insecure/{processing}/{encoded}")
+}
+
+#[cfg(feature = "ssr")]
+const THUMB_PROCESSING: &str = "rs:fill:184:128:0/g:ce/q:70/f:webp";
+#[cfg(feature = "ssr")]
+const PREVIEW_PROCESSING: &str = "rs:fit:1920:1920:0/q:80/f:webp";
+
+#[cfg(feature = "ssr")]
+fn http_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("http client")
+    })
+}
+
+#[cfg(feature = "ssr")]
+async fn serve_imgproxy(path: String, processing: &'static str) -> axum::response::Response {
+    use axum::body::Body;
+    use axum::http::{header, HeaderValue, StatusCode};
+    use axum::response::IntoResponse;
+
+    let Some(base) = imgproxy_base() else {
+        return serve_media(axum::extract::Path(path)).await;
+    };
+
+    let Ok(safe) = resolve_path(&path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !safe.is_file() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let rel = to_rel(&safe);
+    if rel.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let url = imgproxy_fetch_url(&base, &rel, processing);
+    match http_client().get(&url).send().await {
+        Ok(upstream) => {
+            let status = StatusCode::from_u16(upstream.status().as_u16())
+                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let content_type = upstream
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| HeaderValue::from_bytes(v.as_bytes()).ok());
+            let cache_control = upstream
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|v| HeaderValue::from_bytes(v.as_bytes()).ok());
+            let etag = upstream
+                .headers()
+                .get(reqwest::header::ETAG)
+                .and_then(|v| HeaderValue::from_bytes(v.as_bytes()).ok());
+            match upstream.bytes().await {
+                Ok(bytes) => {
+                    let mut res = Body::from(bytes).into_response();
+                    *res.status_mut() = status;
+                    let headers = res.headers_mut();
+                    if let Some(v) = content_type {
+                        headers.insert(header::CONTENT_TYPE, v);
+                    }
+                    if let Some(v) = cache_control {
+                        headers.insert(header::CACHE_CONTROL, v);
+                    } else {
+                        headers.insert(
+                            header::CACHE_CONTROL,
+                            HeaderValue::from_static("private, max-age=120"),
+                        );
+                    }
+                    if let Some(v) = etag {
+                        headers.insert(header::ETAG, v);
+                    }
+                    res
+                }
+                Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+            }
+        }
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
+#[cfg(feature = "ssr")]
+pub async fn serve_thumb(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> axum::response::Response {
+    serve_imgproxy(path, THUMB_PROCESSING).await
+}
+
+#[cfg(feature = "ssr")]
+pub async fn serve_preview(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> axum::response::Response {
+    serve_imgproxy(path, PREVIEW_PROCESSING).await
 }

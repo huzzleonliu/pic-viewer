@@ -16,6 +16,32 @@ pub fn FilePane() -> impl IntoView {
                     <span class="toolbar-label">"当前项"</span>
                     <button
                         class="btn"
+                        title="在当前目录新建文件夹"
+                        disabled=move || state.busy.get()
+                        on:click=move |_| state.request_mkdir()
+                    >
+                        "新建目录"
+                    </button>
+                    <button
+                        class="btn"
+                        title="复制相对托管目录的路径，可粘贴到导出目录"
+                        on:click=move |_| {
+                            let path = state.selected_dir_rel();
+                            if path.is_empty() {
+                                state.status.set("当前是托管根目录，相对路径为空".into());
+                                return;
+                            }
+                            if crate::page::copy_text::copy_plain_text(&path) {
+                                state.status.set(format!("已复制路径：{path}"));
+                            } else {
+                                state.status.set("复制失败".into());
+                            }
+                        }
+                    >
+                        "复制路径"
+                    </button>
+                    <button
+                        class="btn"
                         title="复制当前项"
                         disabled=no_tree_target
                         on:click=move |_| state.copy_selected()
@@ -70,15 +96,15 @@ pub fn FilePane() -> impl IntoView {
                         {move || {
                             let n = state.checked.get().len();
                             if n == 0 {
-                                "已选图片".into()
+                                "已选".into()
                             } else {
-                                format!("已选图片（{n}）")
+                                format!("已选（{n}）")
                             }
                         }}
                     </span>
                     <button
                         class="btn"
-                        title="勾选当前目录全部图片"
+                        title="勾选当前目录全部项目"
                         disabled=move || state.busy.get()
                         on:click=move |_| state.check_all_current()
                     >
@@ -94,7 +120,7 @@ pub fn FilePane() -> impl IntoView {
                     </button>
                     <button
                         class="btn"
-                        title="复制勾选的图片"
+                        title="复制勾选的项目"
                         disabled=no_checked
                         on:click=move |_| state.copy_checked()
                     >
@@ -102,7 +128,7 @@ pub fn FilePane() -> impl IntoView {
                     </button>
                     <button
                         class="btn"
-                        title="剪切勾选的图片"
+                        title="剪切勾选的项目"
                         disabled=no_checked
                         on:click=move |_| state.cut_checked()
                     >
@@ -118,7 +144,7 @@ pub fn FilePane() -> impl IntoView {
                     </button>
                     <button
                         class="btn btn-danger-ghost"
-                        title="删除勾选的图片"
+                        title="删除勾选的项目"
                         disabled=move || no_checked() || state.busy.get()
                         on:click=move |_| state.request_delete_checked()
                     >
@@ -126,10 +152,11 @@ pub fn FilePane() -> impl IntoView {
                     </button>
                     <button
                         class="btn btn-ghost"
-                        title="刷新"
+                        title="刷新并清空勾选"
                         on:click=move |_| {
+                            state.checked.set(Vec::new());
                             state.refresh.update(|n| *n += 1);
-                            state.status.set("已刷新".into());
+                            state.status.set("已刷新，已清空勾选".into());
                         }
                     >
                         "刷新"
@@ -180,20 +207,20 @@ fn RootTree() -> impl IntoView {
         }
     });
 
-    view! { <ul class="tree"><TreeNode entry=root depth=0 start_open=true/></ul> }
+    view! { <ul class="tree"><TreeNode entry=root depth=0/></ul> }
 }
 
 #[component]
-fn TreeNode(entry: FsEntry, depth: u32, #[prop(optional)] start_open: bool) -> impl IntoView {
+fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     let state = expect_context::<ExplorerState>();
-    let expanded = RwSignal::new(start_open);
     let path = entry.path.clone();
     let name = entry.name.clone();
     let is_dir = entry.is_dir;
     let is_image = entry.is_image;
+    let path_expanded = path.clone();
 
     let children = Resource::new(
-        move || (expanded.get(), state.refresh.get()),
+        move || (state.is_expanded(&path_expanded), state.refresh.get()),
         {
             let path = path.clone();
             move |(open, _)| {
@@ -226,8 +253,14 @@ fn TreeNode(entry: FsEntry, depth: u32, #[prop(optional)] start_open: bool) -> i
     };
 
     let indent = 10 + depth * 14;
+    let can_check = !path.is_empty();
     let path_for_class = path.clone();
+    let path_open = path.clone();
+    let path_show = path.clone();
+    let path_box = path.clone();
+    let path_check = path.clone();
     let name_for_view = name.clone();
+    let name_check = name.clone();
 
     let toggle_row = {
         let path = path.clone();
@@ -235,7 +268,7 @@ fn TreeNode(entry: FsEntry, depth: u32, #[prop(optional)] start_open: bool) -> i
         move |ev: leptos::ev::MouseEvent| {
             ev.stop_propagation();
             if is_dir {
-                expanded.update(|v| *v = !*v);
+                state.toggle_expanded(&path);
                 state.selected.set(Some(SelectedItem {
                     path: path.clone(),
                     name: name.clone(),
@@ -251,7 +284,7 @@ fn TreeNode(entry: FsEntry, depth: u32, #[prop(optional)] start_open: bool) -> i
         move |ev: leptos::ev::MouseEvent| {
             ev.stop_propagation();
             if is_dir {
-                expanded.update(|v| *v = !*v);
+                state.toggle_expanded(&path);
                 state.selected.set(Some(SelectedItem {
                     path: path.clone(),
                     name: name.clone(),
@@ -291,23 +324,49 @@ fn TreeNode(entry: FsEntry, depth: u32, #[prop(optional)] start_open: bool) -> i
                     }
                     class
                 }
-                style=format!("padding-left:{indent}px")
                 on:click=select
                 on:dblclick=toggle_row
             >
-                <button
-                    class="chevron"
-                    class:is-hidden=!is_dir
-                    class:is-open=move || expanded.get()
-                    on:click=toggle_chevron
-                    aria-label="展开"
+                <label
+                    class="tree-check"
+                    class:is-root=!can_check
+                    on:click=move |ev| ev.stop_propagation()
+                    on:mousedown=move |ev| ev.stop_propagation()
+                    on:dblclick=move |ev| ev.stop_propagation()
                 >
-                    "▸"
-                </button>
-                <span class="icon">{if is_dir { "📁" } else if is_image { "🖼" } else { "📄" }}</span>
-                <span class="name" title=name_for_view.clone()>{name_for_view.clone()}</span>
+                    <input
+                        type="checkbox"
+                        prop:disabled=!can_check
+                        prop:checked=move || can_check && state.is_checked(&path_box)
+                        on:change=move |ev| {
+                            if !can_check {
+                                return;
+                            }
+                            state.set_checked(
+                                path_check.clone(),
+                                name_check.clone(),
+                                is_dir,
+                                is_image,
+                                event_target_checked(&ev),
+                            );
+                        }
+                    />
+                </label>
+                <div class="tree-item-body" style=format!("padding-left:{indent}px")>
+                    <button
+                        class="chevron"
+                        class:is-hidden=!is_dir
+                        class:is-open=move || state.is_expanded(&path_open)
+                        on:click=toggle_chevron
+                        aria-label="展开"
+                    >
+                        "▸"
+                    </button>
+                    <span class="icon">{if is_dir { "📁" } else if is_image { "🖼" } else { "📄" }}</span>
+                    <span class="name" title=name_for_view.clone()>{name_for_view.clone()}</span>
+                </div>
             </div>
-            <Show when=move || is_dir && expanded.get()>
+            <Show when=move || is_dir && state.is_expanded(&path_show)>
                 <Suspense fallback=|| view! { <div class="tree-loading">"加载中…"</div> }>
                     {move || {
                         children.get().map(|res| match res {

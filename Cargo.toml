@@ -21,6 +21,18 @@ little_exif = { version = "0.6.23", optional = true }
 rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
 gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
+base64 = { version = "0.22", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Window",
+    "Navigator",
+    "Clipboard",
+    "Location",
+    "Document",
+    "Element",
+    "HtmlElement",
+] }
 
 [features]
 hydrate = [
@@ -28,6 +40,7 @@ hydrate = [
     "dep:console_error_panic_hook",
     "dep:wasm-bindgen",
     "dep:gloo-timers",
+    "dep:web-sys",
 ]
 ssr = [
     "dep:axum",
@@ -36,6 +49,9 @@ ssr = [
     "dep:little_exif",
     "dep:rusqlite",
     "dep:image",
+    "dep:zip",
+    "dep:reqwest",
+    "dep:base64",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use crate::structure::FailureItem;
 
 #[cfg(feature = "ssr")]
 mod io {
@@ -40,14 +41,14 @@ mod io {
         }
     }
 
-    fn with_metadata(path: &Path, edit: impl FnOnce(&mut Metadata)) -> Result<(), String> {
+    fn with_metadata<T>(path: &Path, edit: impl FnOnce(&mut Metadata) -> T) -> Result<T, String> {
         let file_type = get_file_type(path).map_err(|_| "该格式不支持写入元数据".to_string())?;
         let mut buf = std::fs::read(path).map_err(|e| e.to_string())?;
         let mut metadata = match Metadata::new_from_vec(&buf, file_type) {
             Ok(m) => m,
             Err(_) => Metadata::new(),
         };
-        edit(&mut metadata);
+        let result = edit(&mut metadata);
         metadata
             .write_to_vec(&mut buf, file_type)
             .map_err(|e| e.to_string())?;
@@ -65,7 +66,7 @@ mod io {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.to_string());
         }
-        Ok(())
+        Ok(result)
     }
 
     fn parse_rating(metadata: &Metadata) -> u8 {
@@ -163,31 +164,49 @@ mod io {
         Ok(parse_tags(&load_metadata(path)?))
     }
 
+    fn write_rating_into(metadata: &mut Metadata, rating: u8) {
+        metadata.set_tag(ExifTag::UnknownINT16U(
+            vec![u16::from(rating)],
+            RATING_TAG,
+            ExifTagGroup::GENERIC,
+        ));
+        metadata.set_tag(ExifTag::UnknownINT16U(
+            vec![percent_for(rating)],
+            RATING_PERCENT_TAG,
+            ExifTagGroup::GENERIC,
+        ));
+    }
+
+    fn write_tags_into(metadata: &mut Metadata, tags: &str) {
+        if tags.is_empty() {
+            metadata.remove_tag(ExifTag::UserComment(Vec::new()));
+            metadata.remove_tag(ExifTag::ImageDescription(String::new()));
+        } else {
+            let endian = metadata.get_endian();
+            metadata.set_tag(ExifTag::UserComment(encode_user_comment(tags, &endian)));
+            metadata.set_tag(ExifTag::ImageDescription(tags.to_string()));
+        }
+    }
+
     pub fn write_rating(path: &Path, rating: u8) -> Result<(), String> {
         with_metadata(path, |metadata| {
-            metadata.set_tag(ExifTag::UnknownINT16U(
-                vec![u16::from(rating)],
-                RATING_TAG,
-                ExifTagGroup::GENERIC,
-            ));
-            metadata.set_tag(ExifTag::UnknownINT16U(
-                vec![percent_for(rating)],
-                RATING_PERCENT_TAG,
-                ExifTagGroup::GENERIC,
-            ));
+            write_rating_into(metadata, rating);
         })
     }
 
     pub fn write_tags(path: &Path, tags: &str) -> Result<(), String> {
         with_metadata(path, |metadata| {
-            if tags.is_empty() {
-                metadata.remove_tag(ExifTag::UserComment(Vec::new()));
-                metadata.remove_tag(ExifTag::ImageDescription(String::new()));
-            } else {
-                let endian = metadata.get_endian();
-                metadata.set_tag(ExifTag::UserComment(encode_user_comment(tags, &endian)));
-                metadata.set_tag(ExifTag::ImageDescription(tags.to_string()));
-            }
+            write_tags_into(metadata, tags);
+        })
+    }
+
+    pub fn apply_mark(path: &Path, rating: u8, incoming_tags: &str) -> Result<String, String> {
+        with_metadata(path, |metadata| {
+            let existing = parse_tags(metadata);
+            let merged = crate::function::filter::merge_tag_lists(&existing, incoming_tags);
+            write_rating_into(metadata, rating);
+            write_tags_into(metadata, &merged);
+            merged
         })
     }
 }
@@ -256,4 +275,79 @@ pub async fn set_image_tags(path: String, tags: String) -> Result<(), ServerFnEr
     .await?;
     crate::function::filter::touch_index_tags(&path, &tags);
     Ok(())
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct BatchMarkReport {
+    pub ok: u32,
+    pub total: u32,
+    pub failures: Vec<FailureItem>,
+}
+
+#[server]
+pub async fn batch_mark_images(
+    paths: Vec<String>,
+    rating: u8,
+    tags: String,
+) -> Result<BatchMarkReport, ServerFnError> {
+    if rating > 5 {
+        return Err(ServerFnError::new("星标须为 0–5"));
+    }
+    let mut unique = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for path in paths {
+        if path.is_empty() || !seen.insert(path.clone()) {
+            continue;
+        }
+        unique.push(path);
+    }
+    if unique.is_empty() {
+        return Ok(BatchMarkReport {
+            ok: 0,
+            total: 0,
+            failures: vec![FailureItem {
+                file: String::new(),
+                error: "没有已勾选的图片".into(),
+            }],
+        });
+    }
+    tokio::task::spawn_blocking(move || {
+        let total = unique.len() as u32;
+        let mut ok = 0u32;
+        let mut failures = Vec::new();
+        for rel in unique {
+            let name = rel
+                .rsplit('/')
+                .next()
+                .unwrap_or(rel.as_str())
+                .to_string();
+            match crate::function::resolve_path(&rel) {
+                Ok(full) if full.is_file() => match io::apply_mark(&full, rating, &tags) {
+                    Ok(merged) => {
+                        crate::function::filter::touch_index_rating(&rel, rating);
+                        crate::function::filter::touch_index_tags(&rel, &merged);
+                        ok += 1;
+                    }
+                    Err(e) => {
+                        failures.push(FailureItem { file: rel, error: e });
+                    }
+                },
+                Ok(_) => {
+                    failures.push(FailureItem {
+                        file: name,
+                        error: "不是文件".into(),
+                    });
+                }
+                Err(e) => {
+                    failures.push(FailureItem {
+                        file: name,
+                        error: e,
+                    });
+                }
+            }
+        }
+        BatchMarkReport { ok, total, failures }
+    })
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))
 }

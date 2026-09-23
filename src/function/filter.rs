@@ -21,6 +21,24 @@ fn tag_tokens(s: &str) -> Vec<String> {
 }
 
 #[cfg(any(feature = "ssr", test))]
+pub fn merge_tag_lists(existing: &str, incoming: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for token in tag_tokens(existing)
+        .into_iter()
+        .chain(tag_tokens(incoming))
+    {
+        let key = token.to_lowercase();
+        if seen.iter().any(|s| s == &key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(token);
+    }
+    out.join(", ")
+}
+
+#[cfg(any(feature = "ssr", test))]
 fn tags_contain(tags: &str, query: &str) -> bool {
     let query = normalize_tag_text(query);
     if query.is_empty() {
@@ -343,7 +361,18 @@ pub async fn apply_meta_filter(
 
 #[cfg(test)]
 mod tests {
-    use super::{star_match, tags_match};
+    use super::{merge_tag_lists, star_match, tags_match};
+
+    #[test]
+    fn merge_appends_and_dedups() {
+        assert_eq!(merge_tag_lists("aaa", "aaa"), "aaa");
+        assert_eq!(merge_tag_lists("AAA", "aaa"), "AAA");
+        assert_eq!(merge_tag_lists("aaa", "bbb"), "aaa, bbb");
+        assert_eq!(merge_tag_lists("aaa, bbb", "bbb, ccc"), "aaa, bbb, ccc");
+        assert_eq!(merge_tag_lists("aaa, aaa", "bbb"), "aaa, bbb");
+        assert_eq!(merge_tag_lists("", "aaa"), "aaa");
+        assert_eq!(merge_tag_lists("aaa", ""), "aaa");
+    }
 
     #[test]
     fn contains_plain_tag() {

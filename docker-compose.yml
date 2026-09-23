@@ -1,30 +1,53 @@
-# 本机用 Podman 调试 Pic Viewer。
-# 把 test/pic 挂到容器 /data，对应应用的 PIC_ROOT。
+# 生产 / 给别人用的部署清单（默认文件名，直接 `podman compose up -d`）。
+# 只拉现成镜像，不在本机编译。相册目录用 PIC_DIR，默认仓库里的测试图。
 #
-# 启动（在仓库根目录，Compose 默认读取本文件）：
-#   podman compose up -d --build
+#   podman compose up -d
+#   浏览器 http://127.0.0.1:3020
 #
-# 浏览器打开 http://127.0.0.1:3020
-# （容器内仍是 3000；宿主机 3000 常被占用，所以映射到 3020）
+# 换成自己的相册：
+#   PIC_DIR=/path/to/photos podman compose up -d
+#
+# 指定应用镜像：
+#   PIC_VIEWER_IMAGE=ghcr.io/huzzleonliu/pic-viewer:v0.0.1 podman compose up -d
+#
+# 开发热更新请用：podman compose -f dev.docker-compose.yml up -d
+
+name: pic-viewer
 
 services:
+  imgproxy:
+    image: docker.io/darthsim/imgproxy:v3.27.2
+    container_name: pic-viewer-imgproxy
+    environment:
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /data
+      IMGPROXY_BIND: 0.0.0.0:8080
+      IMGPROXY_TTL: "31536000"
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_MAX_SRC_RESOLUTION: "50"
+      IMGPROXY_MAX_SRC_FILE_SIZE: "104857600"
+    volumes:
+      - ${PIC_DIR:-./test/pic}:/data:ro,Z
+    user: "1000:1000"
+    userns_mode: keep-id
+    expose:
+      - "8080"
+    restart: unless-stopped
+
   pic-viewer:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: localhost/pic-viewer:local
-    container_name: pic-viewer-debug
+    image: ${PIC_VIEWER_IMAGE:-ghcr.io/huzzleonliu/pic-viewer:latest}
+    container_name: pic-viewer
+    depends_on:
+      - imgproxy
     ports:
       - "3020:3000"
     environment:
       PIC_ROOT: /data
+      IMGPROXY_URL: http://imgproxy:8080
       LEPTOS_SITE_ADDR: 0.0.0.0:3000
       LEPTOS_SITE_ROOT: /app/site
       LEPTOS_OUTPUT_NAME: pic-viewer
       LEPTOS_SITE_PKG_DIR: pkg
     volumes:
-      # :Z 给 SELinux 环境用；CachyOS 上一般无影响
-      - ./test/pic:/data:Z
-    # 根less Podman 下让容器 uid 1000 对齐宿主机用户，便于复制/删除测试图
+      - ${PIC_DIR:-./test/pic}:/data:Z
     userns_mode: keep-id
-    restart: "no"
+    restart: unless-stopped

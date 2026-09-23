@@ -1,67 +1,73 @@
 # Pic Viewer
 
-基于 [Leptos](https://leptos.dev/) + Axum 的图片浏览器。服务端接管一个目录（通过环境变量 `PIC_ROOT`），浏览器左侧浏览/管理文件，右侧查看图片。
-
-## 功能
-
-- 左侧文件树：展开目录，选择文件
-- 复制 / 粘贴 / 删除（工具栏）
-- 右侧看图：放大、缩小、旋转、拖拽平移
-- 滚轮缩放；顶栏可开关缩略图、简单调整、文件管理器
+基于 [Leptos](https://leptos.dev/) + Axum 的图片浏览器。服务端接管一个目录（通过环境变量 `PIC_ROOT`），浏览器左侧浏览/管理文件，右侧查看图片。胶片条和预览默认经 imgproxy 缩放；简单调整栏勾选「原图」则拉本地原文件。
 
 路径操作限制在 `PIC_ROOT` 内，会拒绝 `..` 越界。
 
-## 本地运行
+## 部署（Podman Compose）
+
+默认 `docker-compose.yml` 只拉镜像、不编译。仓库里的 `test/pic/` 会挂到 `/data`，可直接看效果。
+
+```bash
+podman compose up -d
+```
+
+打开 http://127.0.0.1:3020 。停止：`podman compose down`。
+
+换成自己的相册：
+
+```bash
+PIC_DIR=/path/to/photos podman compose up -d
+```
+
+指定应用镜像（默认 `ghcr.io/huzzleonliu/pic-viewer:latest`）：
+
+```bash
+PIC_VIEWER_IMAGE=ghcr.io/huzzleonliu/pic-viewer:v0.0.1 podman compose up -d
+```
+
+浏览器只访问 pic-viewer（3020）。imgproxy 只在内部网络，缩略图/预览由应用转发。
+
+## 开发（热更新）
+
+需要本机 Rust 工具链。imgproxy 用 `dev.docker-compose.yml` 起在宿主机 8080，应用用 `cargo leptos watch`，改代码会自动重编。
 
 ```bash
 rustup target add wasm32-unknown-unknown
-# 如尚未安装
 cargo install cargo-leptos --locked
 
-export PIC_ROOT="$(pwd)/pics"
+podman compose down   # 避免和生产栈抢 3020
+podman compose -f dev.docker-compose.yml up -d
+
+export PIC_ROOT="$(pwd)/test/pic"
+export IMGPROXY_URL="http://127.0.0.1:8080"
 cargo leptos watch
 ```
 
-打开 http://127.0.0.1:3000 （默认监听 `0.0.0.0:3000`）。若 3000 已被占用：
+打开 http://127.0.0.1:3020 （`Cargo.toml` 里 `site-addr` 已是 3020）。`PIC_ROOT` 必须和 compose 里挂给 imgproxy 的目录一致；换相册时两边一起改 `PIC_DIR` / `PIC_ROOT`。
 
-```bash
-export LEPTOS_SITE_ADDR=127.0.0.1:3020
-cargo leptos watch
-```
-
-把图片放进 `pics/`（或你设置的 `PIC_ROOT`）即可在左侧看到。
-
-容器调试请用下面的 Podman Compose，测试图在 `test/pic/`。
+不设 `IMGPROXY_URL` 时 `/thumb`、`/preview` 会回退为原图，可以不启 imgproxy，但胶片条会按原图加载。
 
 ## 环境变量
 
 | 变量 | 说明 | 默认 |
 | --- | --- | --- |
-| `PIC_ROOT` | 托管的图片/文件根目录 | `./pics` |
-| `LEPTOS_SITE_ADDR` | 监听地址 | `0.0.0.0:3000` |
+| `PIC_ROOT` | 托管的图片/文件根目录（应用进程） | `./pics` |
+| `PIC_DIR` | Compose 挂到容器 `/data` 的宿主机目录 | `./test/pic` |
+| `PIC_VIEWER_IMAGE` | 生产 Compose 使用的应用镜像 | `ghcr.io/huzzleonliu/pic-viewer:latest` |
+| `IMGPROXY_URL` | imgproxy 根 URL；设置后缩略图和预览走缩放 | 空 |
+| `LEPTOS_SITE_ADDR` | 监听地址 | `0.0.0.0:3000`（watch 用 metadata 的 3020） |
 | `LEPTOS_SITE_ROOT` | 静态资源目录（生产环境） | `target/site` |
 | `LEPTOS_OUTPUT_NAME` | 前端包名 | `pic-viewer` |
 | `LEPTOS_SITE_PKG_DIR` | wasm/css 子目录 | `pkg` |
 
 健康检查：`GET /health` 返回 `ok`。
 
-## Podman 本机调试
-
-测试目录在 `test/pic/`（含子文件夹、示例 PNG，以及一个非图片 `misc/notes.txt`）。Compose 会把它挂到容器的 `/data`。
+## 自己构建镜像
 
 ```bash
-podman compose up -d --build
-```
-
-打开 http://127.0.0.1:3020 。改测试图直接编辑 `test/pic/` 即可，刷新左侧文件树。
-
-停止：`podman compose down`。
-
-## Docker
-
-```bash
-docker build -t pic-viewer .
-docker run --rm -p 3000:3000 -v /path/to/photos:/data -e PIC_ROOT=/data pic-viewer
+podman build -t localhost/pic-viewer:local .
+PIC_VIEWER_IMAGE=localhost/pic-viewer:local podman compose up -d
 ```
 
 ## Kubernetes

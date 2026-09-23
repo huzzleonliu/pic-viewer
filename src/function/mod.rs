@@ -1,19 +1,26 @@
 pub mod explorer;
+pub mod export;
 pub mod filter;
 pub mod fs;
 pub mod path;
 pub mod rating;
 pub mod rotate;
 
+pub use export::export_checked;
 pub use filter::{apply_meta_filter, get_meta_index_status, start_meta_index};
 pub use fs::{
-    delete_entry, get_root_info, list_dir, paste_entry, rename_entry,
+    create_dir, delete_entry, get_root_info, list_dir, paste_entry, rename_entry,
 };
 pub use path::{
-    is_image_name, join_rel, media_url, parent_path, rewrite_prefix, validate_file_name,
+    is_image_name, join_rel, media_url, parent_path, preview_url, rewrite_prefix, thumb_url,
+    validate_file_name,
 };
-pub use rating::{get_image_rating, get_image_tags, set_image_rating, set_image_tags};
+pub use rating::{
+    batch_mark_images, get_image_rating, get_image_tags, set_image_rating, set_image_tags,
+};
 pub use rotate::save_rotated_image;
 
 #[cfg(feature = "ssr")]
-pub use fs::{mime_for, pic_root, resolve_path, serve_media};
+pub use export::serve_export;
+#[cfg(feature = "ssr")]
+pub use fs::{mime_for, pic_root, resolve_path, serve_media, serve_preview, serve_thumb, unique_dest};

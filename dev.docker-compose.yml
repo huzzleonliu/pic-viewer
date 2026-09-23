@@ -1,0 +1,31 @@
+# 开发用：只启动 imgproxy，应用在宿主机跑 cargo leptos watch（热更新）。
+# 不要和默认 docker-compose.yml 抢 3020；先停生产栈：podman compose down
+#
+#   podman compose -f dev.docker-compose.yml up -d
+#   PIC_ROOT="$(pwd)/test/pic" IMGPROXY_URL=http://127.0.0.1:8080 cargo leptos watch
+#   浏览器 http://127.0.0.1:3020
+#
+# PIC_ROOT 必须和下面挂进 imgproxy 的目录是同一棵树（相对路径才对得上）。
+# 换相册：PIC_DIR=/path/to/photos podman compose -f dev.docker-compose.yml up -d
+#         同时把 PIC_ROOT 设成同一个路径。
+
+name: pic-viewer-dev
+
+services:
+  imgproxy:
+    image: docker.io/darthsim/imgproxy:v3.27.2
+    container_name: pic-viewer-imgproxy-dev
+    environment:
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /data
+      IMGPROXY_BIND: 0.0.0.0:8080
+      IMGPROXY_TTL: "31536000"
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_MAX_SRC_RESOLUTION: "50"
+      IMGPROXY_MAX_SRC_FILE_SIZE: "104857600"
+    volumes:
+      - ${PIC_DIR:-./test/pic}:/data:ro,Z
+    ports:
+      - "8080:8080"
+    user: "1000:1000"
+    userns_mode: keep-id
+    restart: "no"
