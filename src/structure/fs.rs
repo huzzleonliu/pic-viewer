@@ -8,6 +8,7 @@ pub const IMAGE_EXTS: &[&str] = &[
 pub struct FsEntry {
     pub name: String,
     pub path: String,
-    pub is_dir: bool,
+pub is_dir: bool,
     pub is_image: bool,
+    pub is_text: bool,
 }

@@ -194,6 +194,7 @@ fn RootTree() -> impl IntoView {
         path: String::new(),
         is_dir: true,
         is_image: false,
+        is_text: false,
     };
 
     Effect::new(move |_| {
@@ -217,6 +218,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     let name = entry.name.clone();
     let is_dir = entry.is_dir;
     let is_image = entry.is_image;
+    let is_text = entry.is_text;
     let path_expanded = path.clone();
 
     let children = Resource::new(
@@ -322,6 +324,9 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                     if is_image {
                         class.push_str(" is-image");
                     }
+                    if is_text {
+                        class.push_str(" is-text");
+                    }
                     class
                 }
                 on:click=select
@@ -362,7 +367,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                     >
                         "▸"
                     </button>
-                    <span class="icon">{if is_dir { "📁" } else if is_image { "🖼" } else { "📄" }}</span>
+                    <span class="icon">{if is_dir { "📁" } else if is_image { "🖼" } else if is_text { "📝" } else { "📄" }}</span>
                     <span class="name" title=name_for_view.clone()>{name_for_view.clone()}</span>
                 </div>
             </div>

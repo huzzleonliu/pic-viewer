@@ -2,7 +2,7 @@ use crate::structure::FsEntry;
 use leptos::prelude::*;
 
 #[cfg(feature = "ssr")]
-use crate::function::path::is_image_name;
+use crate::function::sniff::{sniff_file, FileKind};
 
 #[cfg(feature = "ssr")]
 mod server_fs {
@@ -168,8 +168,18 @@ pub async fn list_dir(path: String) -> Result<Vec<FsEntry>, ServerFnError> {
         }
         let is_dir = item.file_type().map(|t| t.is_dir()).unwrap_or(false);
         let rel = to_rel(&item.path());
+        let (is_image, is_text) = if is_dir {
+            (false, false)
+        } else {
+            match sniff_file(&item.path()) {
+                FileKind::Image => (true, false),
+                FileKind::Text => (false, true),
+                _ => (false, false),
+            }
+        };
         entries.push(FsEntry {
-            is_image: !is_dir && is_image_name(&name),
+            is_image,
+            is_text,
             name,
             path: rel,
             is_dir,

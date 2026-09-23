@@ -5,6 +5,7 @@ pub mod fs;
 pub mod path;
 pub mod rating;
 pub mod rotate;
+pub mod sniff;
 
 pub use export::export_checked;
 pub use filter::{apply_meta_filter, get_meta_index_status, start_meta_index};
@@ -19,6 +20,7 @@ pub use rating::{
     batch_mark_images, get_image_rating, get_image_tags, set_image_rating, set_image_tags,
 };
 pub use rotate::save_rotated_image;
+pub use sniff::{kind_from_header, FileKind};
 
 #[cfg(feature = "ssr")]
 pub use export::serve_export;

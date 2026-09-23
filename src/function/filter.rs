@@ -135,8 +135,8 @@ mod store {
 
 #[cfg(feature = "ssr")]
 fn list_image_rels(dir: &str) -> Result<Vec<String>, String> {
-    use crate::function::is_image_name;
     use crate::function::path::join_rel;
+    use crate::function::sniff::{sniff_file, FileKind};
     use std::fs;
 
     let full = crate::function::resolve_path(dir)?;
@@ -155,7 +155,7 @@ fn list_image_rels(dir: &str) -> Result<Vec<String>, String> {
             continue;
         }
         let is_dir = item.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if is_dir || !is_image_name(&name) {
+        if is_dir || sniff_file(&item.path()) != FileKind::Image {
             continue;
         }
         rels.push(join_rel(dir, &name));
