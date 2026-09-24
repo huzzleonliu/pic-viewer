@@ -309,6 +309,25 @@ pub async fn create_dir(parent: String, name: String) -> Result<String, ServerFn
 }
 
 #[server]
+pub async fn create_file(parent: String, name: String) -> Result<String, ServerFnError> {
+    let name = name.trim().to_string();
+    crate::function::path::validate_file_name(&name).map_err(ServerFnError::new)?;
+    let parent_full = resolve_path(&parent).map_err(ServerFnError::new)?;
+    if !parent_full.is_dir() {
+        return Err(ServerFnError::new("父路径不是目录"));
+    }
+    let dest = parent_full.join(&name);
+    if !dest.starts_with(pic_root()) {
+        return Err(ServerFnError::new("路径越界"));
+    }
+    if dest.exists() {
+        return Err(ServerFnError::new("目标名称已存在"));
+    }
+    std::fs::File::create(&dest).map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(to_rel(&dest))
+}
+
+#[server]
 pub async fn paste_entry(
     source: String,
     dest_dir: String,

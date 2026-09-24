@@ -24,6 +24,14 @@ pub fn FilePane() -> impl IntoView {
                     </button>
                     <button
                         class="btn"
+                        title="在当前目录新建文本文件"
+                        disabled=move || state.busy.get()
+                        on:click=move |_| state.request_mkfile()
+                    >
+                        "新建文件"
+                    </button>
+                    <button
+                        class="btn"
                         title="复制相对托管目录的路径，可粘贴到导出目录"
                         on:click=move |_| {
                             let path = state.selected_dir_rel();

@@ -153,7 +153,7 @@ pub fn TextEditor() -> impl IntoView {
                 <button
                     class="btn"
                     title="减小字号"
-                    disabled=move || state.editor_font_size.get() <= FONT_MIN
+                    disabled=move || { state.editor_font_size.get() <= FONT_MIN }
                     on:click=move |_| bump_font(-1)
                 >
                     "−"
@@ -162,7 +162,7 @@ pub fn TextEditor() -> impl IntoView {
                 <button
                     class="btn"
                     title="增大字号"
-                    disabled=move || state.editor_font_size.get() >= FONT_MAX
+                    disabled=move || { state.editor_font_size.get() >= FONT_MAX }
                     on:click=move |_| bump_font(1)
                 >
                     "+"

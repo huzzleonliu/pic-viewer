@@ -10,8 +10,8 @@ pub mod sniff;
 pub use export::export_checked;
 pub use filter::{apply_meta_filter, get_meta_index_status, start_meta_index};
 pub use fs::{
-    create_dir, delete_entry, get_root_info, list_dir, paste_entry, read_text_file, rename_entry,
-    write_text_file,
+    create_dir, create_file, delete_entry, get_root_info, list_dir, paste_entry, read_text_file,
+    rename_entry, write_text_file,
 };
 pub use path::{
     is_image_name, join_rel, media_url, parent_path, preview_url, rewrite_prefix, thumb_url,

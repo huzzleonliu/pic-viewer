@@ -2,6 +2,7 @@ target
 .dev-cache
 .git
 .gitignore
+.cache
 pics
 k8s
 README.md

@@ -20,6 +20,7 @@ pub fn ImageViewer() -> impl IntoView {
     let loaded = RwSignal::new(false);
     let failed = RwSignal::new(false);
     let view_original = RwSignal::new(false);
+    let filmstrip_rail = NodeRef::<html::Div>::new();
 
     Effect::new(move |_| {
         state.viewed.track();
@@ -280,6 +281,28 @@ pub fn ImageViewer() -> impl IntoView {
                                     }
                                 />
                             </div>
+                            <button
+                                type="button"
+                                class="stage-nav stage-nav-prev"
+                                title="上一张"
+                                aria-label="上一张"
+                                on:mousedown=move |ev| ev.stop_propagation()
+                                on:click=move |ev| {
+                                    ev.stop_propagation();
+                                    go_relative(-1);
+                                }
+                            ></button>
+                            <button
+                                type="button"
+                                class="stage-nav stage-nav-next"
+                                title="下一张"
+                                aria-label="下一张"
+                                on:mousedown=move |ev| ev.stop_propagation()
+                                on:click=move |ev| {
+                                    ev.stop_propagation();
+                                    go_relative(1);
+                                }
+                            ></button>
                         }
                             .into_any()
                     }
@@ -313,7 +336,26 @@ pub fn ImageViewer() -> impl IntoView {
                                 let shown = shown.clone();
                                 view! {
                                     <Show when=move || state.show_thumbnails.get()>
-                                        <div class="filmstrip-rail">
+                                        <div
+                                            class="filmstrip-rail"
+                                            node_ref=filmstrip_rail
+                                            on:wheel=move |ev: ev::WheelEvent| {
+                                                let dx = if ev.delta_x().abs() > ev.delta_y().abs() {
+                                                    ev.delta_x()
+                                                } else {
+                                                    ev.delta_y()
+                                                };
+                                                if dx == 0.0 {
+                                                    return;
+                                                }
+                                                ev.prevent_default();
+                                                if let Some(el) = filmstrip_rail.get() {
+                                                    el.set_scroll_left(
+                                                        ((el.scroll_left() as f64) + dx).round() as i32,
+                                                    );
+                                                }
+                                            }
+                                        >
                                             <div class="filmstrip">
                                                 {shown
                                                     .clone()
@@ -389,6 +431,7 @@ fn ExportBar() -> impl IntoView {
                 <option value="gif">"GIF"</option>
                 <option value="bmp">"BMP"</option>
                 <option value="tiff">"TIFF"</option>
+                <option value="original">"原图"</option>
             </select>
             <button
                 class="btn filter-apply"

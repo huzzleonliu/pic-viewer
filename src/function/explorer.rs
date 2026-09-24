@@ -1,4 +1,6 @@
-use crate::function::fs::{create_dir, delete_entry, list_dir, paste_entry, rename_entry};
+use crate::function::fs::{
+    create_dir, create_file, delete_entry, list_dir, paste_entry, rename_entry,
+};
 use crate::function::path::{is_image_name, parent_path, rewrite_prefix, validate_file_name};
 use crate::structure::{Clipboard, ClipboardItem, ClipboardMode, ExplorerState, SelectedItem};
 use leptos::prelude::*;
@@ -268,6 +270,53 @@ impl ExplorerState {
     pub fn request_mkdir(self) {
         self.mkdir_draft.set("新建文件夹".into());
         self.mkdir_parent.set(Some(self.selected_dir_rel()));
+    }
+
+    pub fn request_mkfile(self) {
+        self.mkfile_draft.set("新建文件.txt".into());
+        self.mkfile_parent.set(Some(self.selected_dir_rel()));
+    }
+
+    pub fn confirm_mkfile(self) {
+        let Some(parent) = self.mkfile_parent.get() else {
+            return;
+        };
+        if self.busy.get() {
+            return;
+        }
+        let name = self.mkfile_draft.get();
+        if let Err(err) = validate_file_name(&name) {
+            self.status.set(err);
+            return;
+        }
+        let name = name.trim().to_string();
+        self.busy.set(true);
+        leptos::task::spawn_local(async move {
+            match create_file(parent.clone(), name).await {
+                Ok(new_path) => {
+                    let name = new_path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(new_path.as_str())
+                        .to_string();
+                    self.expanded_dirs.update(|set| {
+                        set.insert(parent);
+                    });
+                    self.selected.set(Some(SelectedItem {
+                        path: new_path,
+                        name: name.clone(),
+                        is_dir: false,
+                        is_image: false,
+                        is_text: true,
+                    }));
+                    self.mkfile_parent.set(None);
+                    self.refresh.update(|n| *n += 1);
+                    self.status.set(format!("已新建文件：{name}"));
+                }
+                Err(e) => self.status.set(format!("新建文件失败：{e}")),
+            }
+            self.busy.set(false);
+        });
     }
 
     pub fn confirm_mkdir(self) {

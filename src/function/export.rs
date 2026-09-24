@@ -13,7 +13,7 @@ pub struct ExportReport {
 #[cfg(feature = "ssr")]
 mod io {
     use crate::function::path::validate_file_name;
-    use crate::function::{pic_root, unique_dest};
+    use crate::function::{mime_for, pic_root, unique_dest};
     use crate::structure::FailureItem;
     use image::{DynamicImage, ImageEncoder, ImageFormat};
     use little_exif::filetype::get_file_type;
@@ -67,14 +67,20 @@ mod io {
         map.remove(&id)
     }
 
-    pub fn parse_format(fmt: &str) -> Result<(ImageFormat, &'static str), String> {
+    enum ExportKind {
+        Convert(ImageFormat, &'static str),
+        Original,
+    }
+
+    fn parse_kind(fmt: &str) -> Result<ExportKind, String> {
         match fmt.trim().to_ascii_lowercase().as_str() {
-            "jpg" | "jpeg" => Ok((ImageFormat::Jpeg, "jpg")),
-            "png" => Ok((ImageFormat::Png, "png")),
-            "webp" => Ok((ImageFormat::WebP, "webp")),
-            "gif" => Ok((ImageFormat::Gif, "gif")),
-            "bmp" => Ok((ImageFormat::Bmp, "bmp")),
-            "tif" | "tiff" => Ok((ImageFormat::Tiff, "tiff")),
+            "original" | "orig" => Ok(ExportKind::Original),
+            "jpg" | "jpeg" => Ok(ExportKind::Convert(ImageFormat::Jpeg, "jpg")),
+            "png" => Ok(ExportKind::Convert(ImageFormat::Png, "png")),
+            "webp" => Ok(ExportKind::Convert(ImageFormat::WebP, "webp")),
+            "gif" => Ok(ExportKind::Convert(ImageFormat::Gif, "gif")),
+            "bmp" => Ok(ExportKind::Convert(ImageFormat::Bmp, "bmp")),
+            "tif" | "tiff" => Ok(ExportKind::Convert(ImageFormat::Tiff, "tiff")),
             _ => Err("不支持的导出格式".into()),
         }
     }
@@ -120,18 +126,21 @@ mod io {
         }
     }
 
-    fn unique_zip_name(used: &mut HashMap<String, u32>, stem: &str, ext: &str) -> String {
-        let base = format!("{stem}.{ext}");
-        if !used.contains_key(&base) {
-            used.insert(base.clone(), 0);
-            return base;
+    fn unique_out_name(used: &mut HashMap<String, u32>, name: &str) -> String {
+        if !used.contains_key(name) {
+            used.insert(name.to_string(), 0);
+            return name.to_string();
         }
+        let (stem, suffix) = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+            _ => (name, String::new()),
+        };
         let mut i = 1;
         loop {
-            let name = format!("{stem} ({i}).{ext}");
-            if !used.contains_key(&name) {
-                used.insert(name.clone(), 0);
-                return name;
+            let candidate = format!("{stem} ({i}){suffix}");
+            if !used.contains_key(&candidate) {
+                used.insert(candidate.clone(), 0);
+                return candidate;
             }
             i += 1;
         }
@@ -209,7 +218,7 @@ mod io {
         dest_dir: String,
         format: String,
     ) -> Result<super::ExportReport, String> {
-        let (format, ext) = parse_format(&format)?;
+        let kind = parse_kind(&format)?;
         let mut unique = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for path in paths {
@@ -246,29 +255,34 @@ mod io {
         for rel in unique {
             let name = rel.rsplit('/').next().unwrap_or(rel.as_str()).to_string();
             match crate::function::resolve_path(&rel) {
-                Ok(full) if full.is_file() => match convert_file(&full, &rel, format, ext) {
-                    Ok((out_name, bytes)) => {
-                        if let Some(dir) = &out_dir {
-                            let dest = unique_dest(dir, &out_name);
-                            if let Err(e) = std::fs::write(&dest, &bytes) {
-                                failures.push(FailureItem {
-                                    file: rel,
-                                    error: format!("写入失败：{e}"),
-                                });
-                                continue;
-                            }
-                        } else {
-                            let zip_name = unique_zip_name(
-                                &mut used_names,
-                                &file_stem_name(&out_name),
-                                ext,
-                            );
-                            packed.push((zip_name, bytes));
+                Ok(full) if full.is_file() => {
+                    let converted = match &kind {
+                        ExportKind::Original => std::fs::read(&full)
+                            .map(|bytes| (name.clone(), bytes))
+                            .map_err(|e| e.to_string()),
+                        ExportKind::Convert(format, ext) => {
+                            convert_file(&full, &rel, *format, ext)
                         }
-                        ok += 1;
+                    };
+                    match converted {
+                        Ok((out_name, bytes)) => {
+                            if let Some(dir) = &out_dir {
+                                let dest = unique_dest(dir, &out_name);
+                                if let Err(e) = std::fs::write(&dest, &bytes) {
+                                    failures.push(FailureItem {
+                                        file: rel,
+                                        error: format!("写入失败：{e}"),
+                                    });
+                                    continue;
+                                }
+                            } else {
+                                packed.push((unique_out_name(&mut used_names, &out_name), bytes));
+                            }
+                            ok += 1;
+                        }
+                        Err(e) => failures.push(FailureItem { file: rel, error: e }),
                     }
-                    Err(e) => failures.push(FailureItem { file: rel, error: e }),
-                },
+                }
                 Ok(_) => failures.push(FailureItem {
                     file: name,
                     error: "不是文件".into(),
@@ -283,14 +297,15 @@ mod io {
         let download_url = if to_download && !packed.is_empty() {
             if packed.len() == 1 {
                 let (filename, bytes) = packed.remove(0);
-                let mime = match ext {
-                    "jpg" => "image/jpeg",
-                    "png" => "image/png",
-                    "webp" => "image/webp",
-                    "gif" => "image/gif",
-                    "bmp" => "image/bmp",
-                    "tiff" => "image/tiff",
-                    _ => "application/octet-stream",
+                let mime = match &kind {
+                    ExportKind::Original => mime_for(Path::new(&filename)),
+                    ExportKind::Convert(_, "jpg") => "image/jpeg",
+                    ExportKind::Convert(_, "png") => "image/png",
+                    ExportKind::Convert(_, "webp") => "image/webp",
+                    ExportKind::Convert(_, "gif") => "image/gif",
+                    ExportKind::Convert(_, "bmp") => "image/bmp",
+                    ExportKind::Convert(_, "tiff") => "image/tiff",
+                    ExportKind::Convert(_, _) => "application/octet-stream",
                 };
                 let id = put_download(filename, mime, bytes);
                 Some(format!("/export/{id}"))

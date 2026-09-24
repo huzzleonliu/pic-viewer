@@ -77,6 +77,7 @@ pub fn Explorer() -> impl IntoView {
             <ConfirmDelete/>
             <RenameDialog/>
             <MkdirDialog/>
+            <MkfileDialog/>
             <FailureDialog/>
         </div>
     }.into_any()
@@ -211,6 +212,46 @@ fn MkdirDialog() -> impl IntoView {
                             "取消"
                         </button>
                         <button class="btn" on:click=move |_| state.confirm_mkdir()>
+                            "创建"
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Show>
+    }
+    .into_any()
+}
+
+#[component]
+fn MkfileDialog() -> impl IntoView {
+    let state = expect_context::<ExplorerState>();
+
+    view! {
+        <Show when=move || state.mkfile_parent.get().is_some()>
+            <div class="modal-backdrop" on:click=move |_| state.mkfile_parent.set(None)>
+                <div class="modal" on:click=move |ev| ev.stop_propagation()>
+                    <h2>"新建文件"</h2>
+                    <p>
+                        {move || {
+                            match state.mkfile_parent.get().as_deref() {
+                                Some("") => "位置：/".into(),
+                                Some(path) => format!("位置：/{path}"),
+                                None => String::new(),
+                            }
+                        }}
+                    </p>
+                    <input
+                        class="modal-input"
+                        type="text"
+                        autofocus
+                        prop:value=move || state.mkfile_draft.get()
+                        on:input=move |ev| state.mkfile_draft.set(event_target_value(&ev))
+                    />
+                    <div class="modal-actions">
+                        <button class="btn" on:click=move |_| state.mkfile_parent.set(None)>
+                            "取消"
+                        </button>
+                        <button class="btn" on:click=move |_| state.confirm_mkfile()>
                             "创建"
                         </button>
                     </div>
