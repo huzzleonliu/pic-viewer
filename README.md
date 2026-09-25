@@ -1,87 +1,98 @@
 # Pic Viewer
 
-基于 [Leptos](https://leptos.dev/) + Axum 的图片浏览器。服务端接管一个目录（通过环境变量 `PIC_ROOT`），浏览器左侧浏览/管理文件，右侧查看图片。胶片条和预览默认经 imgproxy 缩放；简单调整栏勾选「原图」则拉本地原文件。
+托管一个目录，在浏览器里浏览、勾选、标记和导出图片，也可以打开文本文件编辑。技术栈是 [Leptos](https://leptos.dev/) 0.8（SSR + WASM hydrate）和 Axum。
 
-路径操作限制在 `PIC_ROOT` 内，会拒绝 `..` 越界。
+路径全部锁在 `PIC_ROOT` 内，拒绝 `..` 越界。胶片条和预览默认经 imgproxy 缩放；简单调整栏勾选「原图」则加载本地原文件。
 
-## 部署（Podman Compose）
+## 文档索引
 
-默认 `docker-compose.yml` 只拉镜像、不编译。仓库里的 `test/pic/` 会挂到 `/data`，可直接看效果。
+| 文档 | 内容 |
+| --- | --- |
+| [readme/部署.md](readme/部署.md) | `.env`、环境变量、端口、Compose / 开发栈 / 本机构建 / Kubernetes、imgproxy 参数 |
+| [readme/流程结构.md](readme/流程结构.md) | 请求链路、图片与文本模式、列表扫描、标记 / 筛选 / 导出 |
+| [readme/模块功能.md](readme/模块功能.md) | 界面各栏、文件操作、预览、编辑器、元数据与导出 |
+| [readme/代码结构.md](readme/代码结构.md) | `src/` 目录、`page` / `function` / `structure`、Cargo feature |
+
+仓库内其它入口：
+
+| 路径 | 用途 |
+| --- | --- |
+| [`example.env`](example.env) | Compose 环境变量模板，复制为 `.env` 后使用 |
+| [`docker-compose.yml`](docker-compose.yml) | 生产：拉镜像，不编译 |
+| [`dev.docker-compose.yml`](dev.docker-compose.yml) | 开发：容器内 `cargo leptos watch` |
+| [`Dockerfile`](Dockerfile) | 生产镜像（`cargo leptos build --release`） |
+| [`Dockerfile.dev`](Dockerfile.dev) | 开发镜像（Rust + cargo-leptos） |
+| [`k8s/deployment.yaml`](k8s/deployment.yaml) | Kubernetes 示例 |
+| [`Cargo.toml`](Cargo.toml) | 依赖与 Leptos 站点元数据 |
+| [`style/main.css`](style/main.css) | 样式 |
+| [`src/`](src/) | 应用源码，见 [代码结构](readme/代码结构.md) |
+
+## 功能概览
+
+左侧文件管理器，右侧按当前项切换图片预览或文本编辑。顶栏可开关各面板。
+
+- **文件管理**：树形浏览（跳过点文件）、勾选、复制 / 剪切 / 粘贴、重命名、删除、新建目录 / 文件。
+- **图片浏览**：缩放、旋转并写回、左右切图、胶片条分页（每页 100 张）、可选含子目录（上限约 10000 张）。
+- **标记与筛选**：EXIF 星标与 tag；内存 SQLite 索引后按星标 / tag 过滤胶片条。
+- **导出**：勾选图下载到本机（多张打 zip）或写回托管目录；可转 JPEG/PNG/WebP 等，或保持原图。
+- **文本**：按文件头嗅探为文本后打开编辑器（读上限 2 MB，写上限 8 MB）。
+
+界面与限制的细节见 [模块功能](readme/模块功能.md)，数据怎么走见 [流程结构](readme/流程结构.md)。
+
+## 部署（生产 Compose）
+
+先把模板变成 `.env`（该文件已 gitignore，不要提交真实路径）：
+
+```bash
+cp example.env .env
+```
+
+编辑 `.env` 里的 `PIC_DIR`（相册）和可选的 `PIC_VIEWER_IMAGE`、`PIC_HOST_PORT`，然后：
 
 ```bash
 podman compose up -d
 ```
 
-打开 http://127.0.0.1:3020 。停止：`podman compose down`。
+不必再写 `PIC_DIR=/photos podman compose up -d` 这种前缀。浏览器打开 http://127.0.0.1:3020 （端口以 `.env` 的 `PIC_HOST_PORT` 为准）。停止：`podman compose down`。
 
-换成自己的相册：
+没有 `.env` 时 compose 仍可用 yaml 里的缺省（相册 `./test/pic`、镜像 `ghcr.io/huzzleonliu/pic-viewer:latest`、端口 3020）。
 
-```bash
-PIC_DIR=/path/to/photos podman compose up -d
-```
+浏览器只访问应用端口。imgproxy 在内部网络，缩略图和预览由应用转发。变量含义见 [部署.md](readme/部署.md)。
 
-指定应用镜像（默认 `ghcr.io/huzzleonliu/pic-viewer:latest`）：
-
-```bash
-PIC_VIEWER_IMAGE=ghcr.io/huzzleonliu/pic-viewer:v0.0.1 podman compose up -d
-```
-
-浏览器只访问 pic-viewer（3020）。imgproxy 只在内部网络，缩略图/预览由应用转发。
-
-## 开发（热更新）
-
-`dev.docker-compose.yml` 起 imgproxy，并在容器里跑 `cargo leptos watch`：源码挂进去，改文件会自动重编。不需要本机安装 Rust。
-
-```bash
-podman compose down   # 避免和生产栈抢 3020
-podman compose -f dev.docker-compose.yml up --build
-```
-
-打开 http://127.0.0.1:3020。第一次会构建开发镜像并完整编译，之后 crates / `target` 缓存在仓库的 `.dev-cache/` 里。建议前台 `up`，才能直接看到编译输出；后台跑的话用 `podman compose -f dev.docker-compose.yml logs -f pic-viewer`。
-
-换相册：
-
-```bash
-PIC_DIR=/path/to/photos podman compose -f dev.docker-compose.yml up --build
-```
-
-`PIC_DIR` 会同时挂给应用（`PIC_ROOT=/data`）和 imgproxy，相对路径才能对上。
-
-若只想在本机跑 `cargo leptos watch`：
-
-```bash
-podman compose -f dev.docker-compose.yml up imgproxy
-export PIC_ROOT="$(pwd)/test/pic"
-export IMGPROXY_URL="http://127.0.0.1:8080"
-cargo leptos watch
-```
-
-不设 `IMGPROXY_URL` 时 `/thumb`、`/preview` 会回退为原图，胶片条会按原图加载。
-
-## 环境变量
-
-| 变量 | 说明 | 默认 |
-| --- | --- | --- |
-| `PIC_ROOT` | 托管的图片/文件根目录（应用进程） | `./pics` |
-| `PIC_DIR` | Compose 挂到容器 `/data` 的宿主机目录 | `./test/pic` |
-| `PIC_VIEWER_IMAGE` | 生产 Compose 使用的应用镜像 | `ghcr.io/huzzleonliu/pic-viewer:latest` |
-| `IMGPROXY_URL` | imgproxy 根 URL；设置后缩略图和预览走缩放 | 空 |
-| `LEPTOS_SITE_ADDR` | 监听地址 | `0.0.0.0:3000`（watch 用 metadata 的 3020） |
-| `LEPTOS_SITE_ROOT` | 静态资源目录（生产环境） | `target/site` |
-| `LEPTOS_OUTPUT_NAME` | 前端包名 | `pic-viewer` |
-| `LEPTOS_SITE_PKG_DIR` | wasm/css 子目录 | `pkg` |
-
-健康检查：`GET /health` 返回 `ok`。
-
-## 自己构建镜像
+自己构建镜像时，把 `.env` 里的 `PIC_VIEWER_IMAGE` 改成本地标签即可：
 
 ```bash
 podman build -t localhost/pic-viewer:local .
-PIC_VIEWER_IMAGE=localhost/pic-viewer:local podman compose up -d
+# 在 .env 中：PIC_VIEWER_IMAGE=localhost/pic-viewer:local
+podman compose up -d
 ```
 
-## Kubernetes
+Kubernetes 示例在 `k8s/`，用法见 [部署.md · Kubernetes](readme/部署.md#kubernetes)。
 
-示例清单在 `k8s/`。把镜像推到你的仓库后修改 `k8s/deployment.yaml` 里的 `image`。
+## 开发（热更新）
 
-用 PVC 或 `hostPath` 把目标目录挂到容器的 `/data`（`PIC_ROOT=/data`）。
+同样用根目录 `.env`（生产、开发两份 compose 都读 `PIC_DIR`）。`dev.docker-compose.yml` 起 imgproxy，并在容器里跑 `cargo leptos watch`。源码挂进去，改文件会重编。本机不必装 Rust。不要和生产栈同时占用 `PIC_HOST_PORT`。
+
+```bash
+cp example.env .env          # 若还没有
+podman compose down
+podman compose -f dev.docker-compose.yml up --build
+```
+
+打开 http://127.0.0.1:3020。第一次会编开发镜像并完整编译，之后 crates / `target` 缓存在 `.dev-cache/`。建议前台 `up` 看编译输出；后台则用 `podman compose -f dev.docker-compose.yml logs -f pic-viewer`。
+
+`PIC_DIR` 会同时挂给应用（容器内 `PIC_ROOT=/data`）和 imgproxy，相对路径才能对上。
+
+只在本机跑 watch、容器只起 imgproxy 时，在 `.env` 里取消注释 `PIC_ROOT` 与 `IMGPROXY_URL`，再：
+
+```bash
+podman compose -f dev.docker-compose.yml up imgproxy
+set -a && source .env && set +a
+cargo leptos watch
+```
+
+不设 `IMGPROXY_URL` 时 `/thumb`、`/preview` 回退为原图。
+
+## 健康检查
+
+`GET /health` 返回 `ok`。

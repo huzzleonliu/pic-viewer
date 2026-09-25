@@ -1,67 +1,31 @@
 use crate::function::fs::{
     create_dir, create_file, delete_entry, list_dir, paste_entry, rename_entry,
 };
-use crate::function::path::{is_image_name, parent_path, rewrite_prefix, validate_file_name};
+use crate::function::path::{
+    is_image_name, parent_path, rel_name, rewrite_prefix, validate_file_name,
+};
 use crate::structure::{Clipboard, ClipboardItem, ClipboardMode, ExplorerState, SelectedItem};
 use leptos::prelude::*;
 
 impl ExplorerState {
     pub fn is_checked(self, path: &str) -> bool {
-        self.checked.get().iter().any(|i| i.path == path)
+        self.checked.with(|list| list.contains(path))
     }
 
-    pub fn set_checked(
-        self,
-        path: String,
-        name: String,
-        is_dir: bool,
-        is_image: bool,
-        is_text: bool,
-        on: bool,
-    ) {
-        if path.is_empty() {
+    pub fn set_checked(self, item: SelectedItem, on: bool) {
+        if item.path.is_empty() {
             return;
         }
         self.checked.update(|list| {
-            let idx = list.iter().position(|x| x.path == path);
-            match (on, idx) {
-                (true, None) => list.push(SelectedItem {
-                    path,
-                    name,
-                    is_dir,
-                    is_image,
-                    is_text,
-                }),
-                (true, Some(i)) => {
-                    list[i].name = name;
-                    list[i].is_dir = is_dir;
-                    list[i].is_image = is_image;
-                    list[i].is_text = is_text;
-                }
-                (false, Some(i)) => {
-                    list.remove(i);
-                }
-                _ => {}
-            }
+            list.set_item(item, on);
         });
-    }
-
-    pub fn set_image_checked(self, path: String, name: String, on: bool) {
-        self.set_checked(path, name, false, true, false, on);
     }
 
     pub fn check_all_current(self) {
         if self.busy.get() {
             return;
         }
-        let dir = match self.viewed.get() {
-            Some(path) => parent_path(&path),
-            None => match self.selected.get() {
-                Some(s) if s.is_dir => s.path,
-                Some(s) => parent_path(&s.path),
-                None => String::new(),
-            },
-        };
+        let dir = self.current_dir_rel();
         self.busy.set(true);
         leptos::task::spawn_local(async move {
             match list_dir(dir).await {
@@ -69,20 +33,12 @@ impl ExplorerState {
                     let items: Vec<SelectedItem> = entries
                         .into_iter()
                         .filter(|e| !e.path.is_empty())
-                        .map(|e| SelectedItem {
-                            path: e.path,
-                            name: e.name,
-                            is_dir: e.is_dir,
-                            is_image: e.is_image,
-                            is_text: e.is_text,
-                        })
+                        .map(SelectedItem::from)
                         .collect();
                     let n = items.len();
                     self.checked.update(|list| {
                         for item in items {
-                            if !list.iter().any(|x| x.path == item.path) {
-                                list.push(item);
-                            }
+                            list.insert_missing(item);
                         }
                     });
                     self.status.set(if n == 0 {
@@ -116,10 +72,10 @@ impl ExplorerState {
         }
     }
     pub fn uncheck_all(self) {
-        if self.checked.get().is_empty() {
+        if self.checked.with(|list| list.is_empty()) {
             return;
         }
-        self.checked.set(Vec::new());
+        self.checked.update(|list| list.clear());
         self.status.set("已取消全选".into());
     }
 
@@ -143,14 +99,7 @@ impl ExplorerState {
                 self.status.set("不能复制根目录".into());
                 return;
             }
-            self.set_clipboard(
-                vec![ClipboardItem {
-                    path: item.path,
-                    name: item.name,
-                    is_dir: item.is_dir,
-                }],
-                ClipboardMode::Copy,
-            );
+            self.set_clipboard(vec![ClipboardItem::from(&item)], ClipboardMode::Copy);
         }
     }
 
@@ -160,14 +109,7 @@ impl ExplorerState {
                 self.status.set("不能剪切根目录".into());
                 return;
             }
-            self.set_clipboard(
-                vec![ClipboardItem {
-                    path: item.path,
-                    name: item.name,
-                    is_dir: item.is_dir,
-                }],
-                ClipboardMode::Cut,
-            );
+            self.set_clipboard(vec![ClipboardItem::from(&item)], ClipboardMode::Cut);
         }
     }
 
@@ -191,14 +133,7 @@ impl ExplorerState {
 
     fn checked_clipboard_items(self) -> Vec<ClipboardItem> {
         self.checked
-            .get()
-            .into_iter()
-            .map(|i| ClipboardItem {
-                path: i.path,
-                name: i.name,
-                is_dir: i.is_dir,
-            })
-            .collect()
+            .with(|list| list.iter().map(ClipboardItem::from).collect())
     }
 
     pub fn paste_clipboard(self) {
@@ -209,11 +144,7 @@ impl ExplorerState {
         if self.busy.get() {
             return;
         }
-        let dest_dir = match self.selected.get() {
-            Some(s) if s.is_dir => s.path,
-            Some(s) => parent_path(&s.path),
-            None => String::new(),
-        };
+        let dest_dir = self.selected_dir_rel();
         let cut = clip.mode == ClipboardMode::Cut;
         self.busy.set(true);
         leptos::task::spawn_local(async move {
@@ -238,13 +169,10 @@ impl ExplorerState {
                 }
             }
             if let Some(err) = first_err {
-                self.status.set(format!("粘贴失败（已完成 {ok} 项）：{err}"));
+                self.status
+                    .set(format!("粘贴失败（已完成 {ok} 项）：{err}"));
             } else if let (Some(new_path), Some(item)) = (last_path, last_item) {
-                let name = new_path
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&item.name)
-                    .to_string();
+                let name = rel_name(&new_path).to_string();
                 self.selected.set(Some(SelectedItem {
                     is_image: !item.is_dir && is_image_name(&name),
                     is_text: false,
@@ -294,11 +222,7 @@ impl ExplorerState {
         leptos::task::spawn_local(async move {
             match create_file(parent.clone(), name).await {
                 Ok(new_path) => {
-                    let name = new_path
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(new_path.as_str())
-                        .to_string();
+                    let name = rel_name(&new_path).to_string();
                     self.expanded_dirs.update(|set| {
                         set.insert(parent);
                     });
@@ -336,11 +260,7 @@ impl ExplorerState {
         leptos::task::spawn_local(async move {
             match create_dir(parent, name).await {
                 Ok(new_path) => {
-                    let name = new_path
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(new_path.as_str())
-                        .to_string();
+                    let name = rel_name(&new_path).to_string();
                     self.selected.set(Some(SelectedItem {
                         path: new_path,
                         name: name.clone(),
@@ -393,11 +313,7 @@ impl ExplorerState {
                     self.retarget_path(&target.path, &new_path);
                     self.rename_target.set(None);
                     self.refresh.update(|n| *n += 1);
-                    let name = new_path
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(new_path.as_str())
-                        .to_string();
+                    let name = rel_name(&new_path).to_string();
                     self.status.set(format!("已重命名为：{name}"));
                 }
                 Err(e) => self.status.set(format!("重命名失败：{e}")),
@@ -408,7 +324,7 @@ impl ExplorerState {
 
     fn retarget_path(self, old: &str, new: &str) {
         let map = |path: &str| rewrite_prefix(path, old, new);
-        let file_name = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
+        let file_name = |path: &str| rel_name(path).to_string();
 
         if let Some(v) = self.viewed.get() {
             let nv = map(&v);
@@ -430,14 +346,14 @@ impl ExplorerState {
             }
         }
         self.checked.update(|list| {
-            for item in list.iter_mut() {
+            list.for_each_mut(|item| {
                 let np = map(&item.path);
                 if np != item.path {
                     item.name = file_name(&np);
                     item.is_image = !item.is_dir && is_image_name(&item.name);
                     item.path = np;
                 }
-            }
+            });
         });
         if let Some(mut clip) = self.clipboard.get() {
             for item in &mut clip.items {
@@ -472,7 +388,7 @@ impl ExplorerState {
     }
 
     pub fn request_delete_checked(self) {
-        let items = self.checked.get();
+        let items = self.checked.with(|list| list.to_vec());
         if items.is_empty() {
             self.status.set("未勾选项目".into());
             return;
@@ -529,11 +445,7 @@ impl ExplorerState {
         }
         self.checked.update(|list| list.retain(|i| i.path != path));
         if let Some(clip) = self.clipboard.get() {
-            let items: Vec<_> = clip
-                .items
-                .into_iter()
-                .filter(|i| i.path != path)
-                .collect();
+            let items: Vec<_> = clip.items.into_iter().filter(|i| i.path != path).collect();
             if items.is_empty() {
                 self.clipboard.set(None);
             } else {

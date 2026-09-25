@@ -24,13 +24,7 @@ pub fn TextEditor() -> impl IntoView {
     let textarea_ref = NodeRef::<html::Textarea>::new();
     let gutter_ref = NodeRef::<html::Pre>::new();
 
-    let text_path = Memo::new(move |_| {
-        state
-            .selected
-            .get()
-            .filter(|s| s.is_text)
-            .map(|s| s.path)
-    });
+    let text_path = Memo::new(move |_| state.selected.get().filter(|s| s.is_text).map(|s| s.path));
     let text_name = Memo::new(move |_| {
         state
             .selected
@@ -50,24 +44,23 @@ pub fn TextEditor() -> impl IntoView {
         },
     );
 
-    Effect::new(move |_| {
-        match source.get() {
-            Some(Ok(text)) => {
-                load_error.set(None);
-                saved.set(text.clone());
-                draft.set(text);
-            }
-            Some(Err(err)) => {
-                load_error.set(Some(err.to_string()));
-                saved.set(String::new());
-                draft.set(String::new());
-            }
-            None => {}
+    Effect::new(move |_| match source.get() {
+        Some(Ok(text)) => {
+            load_error.set(None);
+            saved.set(text.clone());
+            draft.set(text);
         }
+        Some(Err(err)) => {
+            load_error.set(Some(err.to_string()));
+            saved.set(String::new());
+            draft.set(String::new());
+        }
+        None => {}
     });
 
     let dirty = move || draft.get() != saved.get();
-    let can_write = move || text_path.get().is_some() && load_error.get().is_none() && !saving.get();
+    let can_write =
+        move || text_path.get().is_some() && load_error.get().is_none() && !saving.get();
 
     let reset = move |_| {
         if !can_write() {

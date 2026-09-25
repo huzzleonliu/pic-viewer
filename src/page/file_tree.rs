@@ -5,8 +5,14 @@ use leptos::prelude::*;
 #[component]
 pub fn FilePane() -> impl IntoView {
     let state = expect_context::<ExplorerState>();
-    let no_tree_target = move || state.selected.get().map(|s| s.path.is_empty()).unwrap_or(true);
-    let no_checked = move || state.checked.get().is_empty();
+    let no_tree_target = move || {
+        state
+            .selected
+            .get()
+            .map(|s| s.path.is_empty())
+            .unwrap_or(true)
+    };
+    let no_checked = move || state.checked.with(|list| list.is_empty());
     let clipboard_empty = move || state.clipboard.get().is_none() || state.busy.get();
 
     view! {
@@ -102,7 +108,7 @@ pub fn FilePane() -> impl IntoView {
                 <div class="toolbar toolbar-checked">
                     <span class="toolbar-label">
                         {move || {
-                            let n = state.checked.get().len();
+                            let n = state.checked.with(|list| list.len());
                             if n == 0 {
                                 "已选".into()
                             } else {
@@ -162,7 +168,7 @@ pub fn FilePane() -> impl IntoView {
                         class="btn btn-ghost"
                         title="刷新并清空勾选"
                         on:click=move |_| {
-                            state.checked.set(Vec::new());
+                            state.checked.update(|list| list.clear());
                             state.refresh.update(|n| *n += 1);
                             state.status.set("已刷新，已清空勾选".into());
                         }
@@ -191,7 +197,8 @@ pub fn FilePane() -> impl IntoView {
                 <RootTree/>
             </div>
         </aside>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]
@@ -207,13 +214,7 @@ fn RootTree() -> impl IntoView {
 
     Effect::new(move |_| {
         if state.selected.get().is_none() {
-            state.selected.set(Some(SelectedItem {
-                path: String::new(),
-                name: "/".into(),
-                is_dir: true,
-                is_image: false,
-                is_text: false,
-            }));
+            state.selected.set(Some(SelectedItem::root()));
         }
     });
 
@@ -223,11 +224,12 @@ fn RootTree() -> impl IntoView {
 #[component]
 fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     let state = expect_context::<ExplorerState>();
-    let path = entry.path.clone();
-    let name = entry.name.clone();
-    let is_dir = entry.is_dir;
-    let is_image = entry.is_image;
-    let is_text = entry.is_text;
+    let item = SelectedItem::from(&entry);
+    let path = item.path.clone();
+    let is_dir = item.is_dir;
+    let is_image = item.is_image;
+    let is_text = item.is_text;
+    let name_for_view = item.name.clone();
     let path_expanded = path.clone();
 
     let children = Resource::new(
@@ -248,21 +250,17 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     );
 
     let select = {
-        let path = path.clone();
-        let name = name.clone();
+        let item = item.clone();
         move |_| {
-            state.selected.set(Some(SelectedItem {
-                path: path.clone(),
-                name: name.clone(),
-                is_dir,
-                is_image,
-                is_text,
-            }));
-            if is_image {
-                state.viewed.set(Some(path.clone()));
+            if item.is_image {
+                state.viewed.set(Some(item.path.clone()));
             }
+            state.selected.set(Some(item.clone()));
         }
     };
+
+    let toggle_row = expand_and_select(state, item.clone());
+    let toggle_chevron = expand_and_select(state, item.clone());
 
     let indent = 10 + depth * 14;
     let can_check = !path.is_empty();
@@ -270,44 +268,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     let path_open = path.clone();
     let path_show = path.clone();
     let path_box = path.clone();
-    let path_check = path.clone();
-    let name_for_view = name.clone();
-    let name_check = name.clone();
-
-    let toggle_row = {
-        let path = path.clone();
-        let name = name.clone();
-        move |ev: leptos::ev::MouseEvent| {
-            ev.stop_propagation();
-            if is_dir {
-                state.toggle_expanded(&path);
-                state.selected.set(Some(SelectedItem {
-                    path: path.clone(),
-                    name: name.clone(),
-                    is_dir,
-                    is_image,
-                    is_text,
-                }));
-            }
-        }
-    };
-    let toggle_chevron = {
-        let path = path.clone();
-        let name = name.clone();
-        move |ev: leptos::ev::MouseEvent| {
-            ev.stop_propagation();
-            if is_dir {
-                state.toggle_expanded(&path);
-                state.selected.set(Some(SelectedItem {
-                    path: path.clone(),
-                    name: name.clone(),
-                    is_dir,
-                    is_image,
-                    is_text,
-                }));
-            }
-        }
-    };
+    let item_check = item.clone();
 
     view! {
         <li class="tree-li">
@@ -359,14 +320,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                             if !can_check {
                                 return;
                             }
-                            state.set_checked(
-                                path_check.clone(),
-                                name_check.clone(),
-                                is_dir,
-                                is_image,
-                                is_text,
-                                event_target_checked(&ev),
-                            );
+                            state.set_checked(item_check.clone(), event_target_checked(&ev));
                         }
                     />
                 </label>
@@ -417,4 +371,17 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
             </Show>
         </li>
     }.into_any()
+}
+
+fn expand_and_select(
+    state: ExplorerState,
+    item: SelectedItem,
+) -> impl Fn(leptos::ev::MouseEvent) + 'static {
+    move |ev: leptos::ev::MouseEvent| {
+        ev.stop_propagation();
+        if item.is_dir {
+            state.toggle_expanded(&item.path);
+            state.selected.set(Some(item.clone()));
+        }
+    }
 }

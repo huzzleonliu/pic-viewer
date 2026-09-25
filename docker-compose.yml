@@ -1,14 +1,10 @@
 # 生产 / 给别人用的部署清单（默认文件名，直接 `podman compose up -d`）。
-# 只拉现成镜像，不在本机编译。相册目录用 PIC_DIR，默认仓库里的测试图。
+# 只拉现成镜像，不在本机编译。变量来自项目根目录 .env（先 cp example.env .env）。
 #
+#   cp example.env .env
+#   # 编辑 .env 里的 PIC_DIR / PIC_VIEWER_IMAGE
 #   podman compose up -d
-#   浏览器 http://127.0.0.1:3020
-#
-# 换成自己的相册：
-#   PIC_DIR=/path/to/photos podman compose up -d
-#
-# 指定应用镜像：
-#   PIC_VIEWER_IMAGE=ghcr.io/huzzleonliu/pic-viewer:v0.0.1 podman compose up -d
+#   浏览器 http://127.0.0.1:${PIC_HOST_PORT:-3020}
 #
 # 开发热更新请用：podman compose -f dev.docker-compose.yml up --build
 
@@ -39,7 +35,7 @@ services:
     depends_on:
       - imgproxy
     ports:
-      - "3020:3000"
+      - "${PIC_HOST_PORT:-3020}:3000"
     environment:
       PIC_ROOT: /data
       IMGPROXY_URL: http://imgproxy:8080

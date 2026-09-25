@@ -19,7 +19,8 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <App/>
             </body>
         </html>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[component]
@@ -36,5 +37,6 @@ pub fn App() -> impl IntoView {
                 </Routes>
             </main>
         </Router>
-    }.into_any()
+    }
+    .into_any()
 }

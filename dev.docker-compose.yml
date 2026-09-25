@@ -1,13 +1,13 @@
 # 开发用：imgproxy + 容器内 cargo leptos watch（改代码自动重编）。
-# 不要和默认 docker-compose.yml 抢 3020；先停生产栈。
+# 不要和默认 docker-compose.yml 抢 PIC_HOST_PORT；先停生产栈。
+# 变量来自项目根目录 .env（先 cp example.env .env，改 PIC_DIR）。
 #
 #   podman compose down
+#   cp example.env .env
 #   podman compose -f dev.docker-compose.yml up --build
-#   浏览器 http://127.0.0.1:3020
+#   浏览器 http://127.0.0.1:${PIC_HOST_PORT:-3020}
 #
 # 第一次会编工具链镜像并完整编译项目，之后 crates / target 缓存在仓库的 .dev-cache/ 里。
-# 换相册：PIC_DIR=/path/to/photos podman compose -f dev.docker-compose.yml up --build
-#
 # PIC_ROOT（容器内 /data）必须和 imgproxy 挂的是同一棵树。
 
 name: pic-viewer-dev
@@ -26,7 +26,7 @@ services:
     volumes:
       - ${PIC_DIR:-./test/pic}:/data:ro,Z
     ports:
-      - "8080:8080"
+      - "${IMGPROXY_HOST_PORT:-8080}:8080"
     user: "1000:1000"
     userns_mode: keep-id
     restart: "no"
@@ -48,7 +48,7 @@ services:
       PIC_ROOT: /data
       IMGPROXY_URL: http://imgproxy:8080
       LEPTOS_SITE_ADDR: 0.0.0.0:3020
-      LEPTOS_RELOAD_PORT: "3021"
+      LEPTOS_RELOAD_PORT: "${LEPTOS_RELOAD_PORT:-3021}"
       CARGO_HOME: /cache/cargo
       CARGO_TERM_COLOR: always
       CARGO_TARGET_DIR: /app/target
@@ -58,7 +58,7 @@ services:
       - ./.dev-cache/target:/app/target:Z
       - ${PIC_DIR:-./test/pic}:/data:Z
     ports:
-      - "3020:3020"
-      - "3021:3021"
+      - "${PIC_HOST_PORT:-3020}:3020"
+      - "${LEPTOS_RELOAD_PORT:-3021}:${LEPTOS_RELOAD_PORT:-3021}"
     userns_mode: keep-id
     restart: "no"

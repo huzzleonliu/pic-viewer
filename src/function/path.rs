@@ -6,6 +6,10 @@ pub fn is_image_name(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub fn rel_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
 pub fn parent_path(path: &str) -> String {
     match path.rsplit_once('/') {
         Some((parent, _)) => parent.to_string(),
@@ -66,4 +70,47 @@ pub fn thumb_url(rel: &str) -> String {
 
 pub fn preview_url(rel: &str) -> String {
     format!("/preview/{}", encode_rel(rel))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{join_rel, parent_path, rel_name, rewrite_prefix, validate_file_name};
+
+    #[test]
+    fn rewrite_replaces_exact_path() {
+        assert_eq!(rewrite_prefix("album/a", "album/a", "dest/a"), "dest/a");
+    }
+
+    #[test]
+    fn rewrite_replaces_children_only_with_slash() {
+        assert_eq!(
+            rewrite_prefix("album/a/b.jpg", "album/a", "dest/a"),
+            "dest/a/b.jpg"
+        );
+        assert_eq!(rewrite_prefix("album/ab", "album/a", "dest/a"), "album/ab");
+        assert_eq!(rewrite_prefix("other", "album/a", "dest/a"), "other");
+    }
+
+    #[test]
+    fn rewrite_empty_old_does_not_prefix() {
+        assert_eq!(rewrite_prefix("album/a", "", "x"), "album/a");
+    }
+
+    #[test]
+    fn rel_parent_join() {
+        assert_eq!(rel_name("album/a/b.jpg"), "b.jpg");
+        assert_eq!(rel_name("b.jpg"), "b.jpg");
+        assert_eq!(parent_path("album/a/b.jpg"), "album/a");
+        assert_eq!(parent_path("b.jpg"), "");
+        assert_eq!(join_rel("", "x"), "x");
+        assert_eq!(join_rel("album", "x"), "album/x");
+    }
+
+    #[test]
+    fn validate_name_rejects_separators() {
+        assert!(validate_file_name("ok.txt").is_ok());
+        assert!(validate_file_name("").is_err());
+        assert!(validate_file_name("a/b").is_err());
+        assert!(validate_file_name("..").is_err());
+    }
 }

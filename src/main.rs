@@ -19,7 +19,10 @@ async fn main() {
     log!("PIC_ROOT = {}", pic_root().display());
     match std::env::var("IMGPROXY_URL") {
         Ok(url) if !url.trim().is_empty() => {
-            log!("IMGPROXY_URL = {} (thumbs/preview via imgproxy)", url.trim());
+            log!(
+                "IMGPROXY_URL = {} (thumbs/preview via imgproxy)",
+                url.trim()
+            );
         }
         _ => log!("IMGPROXY_URL unset (thumbs/preview serve originals)"),
     }

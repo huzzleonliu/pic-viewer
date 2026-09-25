@@ -1,5 +1,5 @@
-use leptos::prelude::*;
 use crate::structure::FailureItem;
+use leptos::prelude::*;
 
 #[cfg(feature = "ssr")]
 mod io {
@@ -253,7 +253,10 @@ pub async fn set_image_rating(path: String, rating: u8) -> Result<u8, ServerFnEr
     if rating > 5 {
         return Err(ServerFnError::new("星标须为 0–5"));
     }
-    with_image_path(path.clone(), move |p| io::write_rating(p, rating).map(|()| rating)).await?;
+    with_image_path(path.clone(), move |p| {
+        io::write_rating(p, rating).map(|()| rating)
+    })
+    .await?;
     crate::function::filter::touch_index_rating(&path, rating);
     Ok(rating)
 }
@@ -316,11 +319,7 @@ pub async fn batch_mark_images(
         let mut ok = 0u32;
         let mut failures = Vec::new();
         for rel in unique {
-            let name = rel
-                .rsplit('/')
-                .next()
-                .unwrap_or(rel.as_str())
-                .to_string();
+            let name = crate::function::path::rel_name(&rel).to_string();
             match crate::function::resolve_path(&rel) {
                 Ok(full) if full.is_file() => match io::apply_mark(&full, rating, &tags) {
                     Ok(merged) => {
@@ -329,7 +328,10 @@ pub async fn batch_mark_images(
                         ok += 1;
                     }
                     Err(e) => {
-                        failures.push(FailureItem { file: rel, error: e });
+                        failures.push(FailureItem {
+                            file: rel,
+                            error: e,
+                        });
                     }
                 },
                 Ok(_) => {
@@ -346,7 +348,11 @@ pub async fn batch_mark_images(
                 }
             }
         }
-        BatchMarkReport { ok, total, failures }
+        BatchMarkReport {
+            ok,
+            total,
+            failures,
+        }
     })
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))

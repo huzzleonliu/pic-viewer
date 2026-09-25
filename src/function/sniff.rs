@@ -127,6 +127,20 @@ fn looks_like_text(buf: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
+pub fn kind_from_ext(ext: &str) -> Option<FileKind> {
+    match ext.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "avif" | "ico" => {
+            Some(FileKind::Image)
+        }
+        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "avi" => Some(FileKind::Video),
+        "txt" | "md" | "markdown" | "json" | "csv" | "toml" | "yaml" | "yml" | "rs" | "js"
+        | "ts" | "css" | "html" | "htm" | "xml" | "log" | "ini" | "conf" | "sh" => {
+            Some(FileKind::Text)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(feature = "ssr")]
 pub fn sniff_file(path: &std::path::Path) -> FileKind {
     use std::io::Read;
@@ -138,16 +152,23 @@ pub fn sniff_file(path: &std::path::Path) -> FileKind {
     kind_from_header(&buf[..n])
 }
 
+#[cfg(feature = "ssr")]
+pub fn classify_file(path: &std::path::Path) -> FileKind {
+    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+        if let Some(kind) = kind_from_ext(ext) {
+            return kind;
+        }
+    }
+    sniff_file(path)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{decode_text, kind_from_header, FileKind};
+    use super::{decode_text, kind_from_ext, kind_from_header, FileKind};
 
     #[test]
     fn png_jpeg_gif_webp() {
-        assert_eq!(
-            kind_from_header(b"\x89PNG\r\n\x1a\nrest"),
-            FileKind::Image
-        );
+        assert_eq!(kind_from_header(b"\x89PNG\r\n\x1a\nrest"), FileKind::Image);
         assert_eq!(kind_from_header(b"\xff\xd8\xff\xe0...."), FileKind::Image);
         assert_eq!(kind_from_header(b"GIF89a...."), FileKind::Image);
         let mut webp = [0u8; 16];
@@ -173,10 +194,7 @@ mod tests {
             kind_from_header(b"<svg xmlns=\"http://www.w3.org/2000/svg\">"),
             FileKind::Text
         );
-        assert_eq!(
-            kind_from_header(b"{\"ok\": true}\n"),
-            FileKind::Text
-        );
+        assert_eq!(kind_from_header(b"{\"ok\": true}\n"), FileKind::Text);
     }
 
     #[test]
@@ -189,6 +207,16 @@ mod tests {
     #[test]
     fn utf16_bom_is_text() {
         assert_eq!(kind_from_header(b"\xff\xfeh\0i\0"), FileKind::Text);
+    }
+
+    #[test]
+    fn extension_fast_path() {
+        assert_eq!(kind_from_ext("JPG"), Some(FileKind::Image));
+        assert_eq!(kind_from_ext("png"), Some(FileKind::Image));
+        assert_eq!(kind_from_ext("mp4"), Some(FileKind::Video));
+        assert_eq!(kind_from_ext("txt"), Some(FileKind::Text));
+        assert_eq!(kind_from_ext("svg"), None);
+        assert_eq!(kind_from_ext("bin"), None);
     }
 
     #[test]

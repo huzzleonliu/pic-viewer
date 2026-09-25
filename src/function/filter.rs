@@ -24,10 +24,7 @@ fn tag_tokens(s: &str) -> Vec<String> {
 pub fn merge_tag_lists(existing: &str, incoming: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    for token in tag_tokens(existing)
-        .into_iter()
-        .chain(tag_tokens(incoming))
-    {
+    for token in tag_tokens(existing).into_iter().chain(tag_tokens(incoming)) {
         let key = token.to_lowercase();
         if seen.iter().any(|s| s == &key) {
             continue;
@@ -111,7 +108,10 @@ mod store {
                     path TEXT PRIMARY KEY,
                     rating INTEGER NOT NULL,
                     tags TEXT NOT NULL,
-                    seq INTEGER NOT NULL
+                    seq INTEGER NOT NULL,
+                    mtime INTEGER NOT NULL DEFAULT 0,
+                    size INTEGER NOT NULL DEFAULT 0,
+                    gen INTEGER NOT NULL DEFAULT 0
                 )",
                 [],
             )
@@ -129,18 +129,8 @@ mod store {
     }
 
     pub fn lock() -> std::sync::MutexGuard<'static, IndexState> {
-        state()
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+        state().lock().unwrap_or_else(|poison| poison.into_inner())
     }
-}
-
-#[cfg(feature = "ssr")]
-fn list_image_rels(dir: &str, recursive: bool) -> Result<Vec<String>, String> {
-    Ok(crate::function::fs::collect_image_entries(dir, recursive)?
-        .into_iter()
-        .map(|e| e.path)
-        .collect())
 }
 
 #[cfg(feature = "ssr")]
@@ -160,40 +150,85 @@ impl Drop for ReadyOnDrop {
 }
 
 #[cfg(feature = "ssr")]
-fn spawn_scan(dir: String, paths: Vec<String>, gen: u64) {
+fn spawn_scan(dir: String, records: Vec<crate::function::fs::ImageRecord>, gen: u64) {
     tokio::task::spawn_blocking(move || {
         let _guard = ReadyOnDrop {
             gen,
             dir: dir.clone(),
         };
-        for (seq, rel) in paths.into_iter().enumerate() {
+        for (seq, rec) in records.into_iter().enumerate() {
             {
                 let st = store::lock();
                 if st.gen != gen {
                     return;
                 }
             }
-            let Ok(full) = crate::function::resolve_path(&rel) else {
-                continue;
+            let reuse = {
+                let st = store::lock();
+                st.conn
+                    .query_row(
+                        "SELECT mtime, size, rating, tags FROM images WHERE path = ?1",
+                        rusqlite::params![rec.path],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, i64>(2)?,
+                                row.get::<_, String>(3)?,
+                            ))
+                        },
+                    )
+                    .ok()
             };
-            let (rating, tags) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let rating = crate::function::rating::read_file_rating(&full).unwrap_or(0);
-                let tags = normalize_tag_text(
-                    &crate::function::rating::read_file_tags(&full).unwrap_or_default(),
-                );
-                (rating, tags)
-            }))
-            .unwrap_or_else(|_| (0, String::new()));
+            let (rating, tags) = if let Some((mtime, size, rating, tags)) = reuse {
+                if mtime as u64 == rec.mtime && size as u64 == rec.size {
+                    (rating.clamp(0, 5) as u8, tags)
+                } else {
+                    read_exif_for(&rec.path)
+                }
+            } else {
+                read_exif_for(&rec.path)
+            };
             let st = store::lock();
             if st.gen != gen {
                 return;
             }
             let _ = st.conn.execute(
-                "INSERT OR REPLACE INTO images (path, rating, tags, seq) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![rel, rating, tags, seq as i64],
+                "INSERT OR REPLACE INTO images (path, rating, tags, seq, mtime, size, gen)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    rec.path,
+                    rating,
+                    tags,
+                    seq as i64,
+                    rec.mtime as i64,
+                    rec.size as i64,
+                    gen as i64
+                ],
+            );
+        }
+        let st = store::lock();
+        if st.gen == gen {
+            let _ = st.conn.execute(
+                "DELETE FROM images WHERE gen != ?1",
+                rusqlite::params![gen as i64],
             );
         }
     });
+}
+
+#[cfg(feature = "ssr")]
+fn read_exif_for(rel: &str) -> (u8, String) {
+    let Ok(full) = crate::function::resolve_path(rel) else {
+        return (0, String::new());
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let rating = crate::function::rating::read_file_rating(&full).unwrap_or(0);
+        let tags =
+            normalize_tag_text(&crate::function::rating::read_file_tags(&full).unwrap_or_default());
+        (rating, tags)
+    }))
+    .unwrap_or_else(|_| (0, String::new()))
 }
 
 #[cfg(feature = "ssr")]
@@ -233,17 +268,16 @@ pub async fn start_meta_index(
         st.recursive = recursive;
         st.total = 0;
         st.ready = false;
-        st.conn
-            .execute("DELETE FROM images", [])
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
         gen
     };
     let scan_dir = dir.clone();
-    let paths = match tokio::task::spawn_blocking(move || list_image_rels(&scan_dir, recursive))
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
+    let scan = match tokio::task::spawn_blocking(move || {
+        crate::function::fs::cached_image_scan(&scan_dir, recursive, epoch)
+    })
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
     {
-        Ok(paths) => paths,
+        Ok(scan) => scan,
         Err(e) => {
             let mut st = store::lock();
             if st.gen == gen {
@@ -257,13 +291,17 @@ pub async fn start_meta_index(
         if st.gen != gen {
             return Ok(());
         }
-        st.total = paths.len() as u32;
-        if paths.is_empty() {
+        st.total = scan.records.len() as u32;
+        if scan.records.is_empty() {
             st.ready = true;
+            let _ = st.conn.execute(
+                "DELETE FROM images WHERE gen != ?1",
+                rusqlite::params![gen as i64],
+            );
             return Ok(());
         }
     }
-    spawn_scan(dir, paths, gen);
+    spawn_scan(dir, scan.records, gen);
     Ok(())
 }
 
@@ -279,7 +317,11 @@ pub async fn get_meta_index_status(dir: String) -> Result<MetaScanStatus, Server
     }
     let done: u32 = st
         .conn
-        .query_row("SELECT COUNT(*) FROM images", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM images WHERE gen = ?1",
+            rusqlite::params![st.gen as i64],
+            |row| row.get(0),
+        )
         .unwrap_or(0);
     Ok(MetaScanStatus {
         ready: st.ready,
@@ -307,10 +349,10 @@ pub async fn apply_meta_filter(
         }
         let mut stmt = st
             .conn
-            .prepare("SELECT path, rating, tags FROM images ORDER BY seq")
+            .prepare("SELECT path, rating, tags FROM images WHERE gen = ?1 ORDER BY seq")
             .map_err(|e| ServerFnError::new(e.to_string()))?;
         let mapped = stmt
-            .query_map([], |row| {
+            .query_map(rusqlite::params![st.gen as i64], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
