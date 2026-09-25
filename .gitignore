@@ -3,6 +3,4 @@ target/
 .dev-cache/
 **/*.rs.bk
 *.pdb
-/pics/*
-!/pics/.gitkeep
 .env
