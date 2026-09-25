@@ -6,3 +6,4 @@ target/
 /pics/*
 !/pics/.gitkeep
 .env
+test/
