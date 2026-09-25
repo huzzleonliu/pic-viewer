@@ -99,6 +99,7 @@ mod store {
         pub gen: u64,
         pub total: u32,
         pub ready: bool,
+        pub recursive: bool,
     }
 
     pub fn state() -> &'static Mutex<IndexState> {
@@ -122,6 +123,7 @@ mod store {
                 gen: 0,
                 total: 0,
                 ready: false,
+                recursive: false,
             })
         })
     }
@@ -134,34 +136,11 @@ mod store {
 }
 
 #[cfg(feature = "ssr")]
-fn list_image_rels(dir: &str) -> Result<Vec<String>, String> {
-    use crate::function::path::join_rel;
-    use crate::function::sniff::{sniff_file, FileKind};
-    use std::fs;
-
-    let full = crate::function::resolve_path(dir)?;
-    if !full.is_dir() {
-        return Err("不是目录".into());
-    }
-    let mut rels = Vec::new();
-    let read = fs::read_dir(&full).map_err(|e| e.to_string())?;
-    for item in read {
-        let item = match item {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let name = item.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        let is_dir = item.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if is_dir || sniff_file(&item.path()) != FileKind::Image {
-            continue;
-        }
-        rels.push(join_rel(dir, &name));
-    }
-    rels.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-    Ok(rels)
+fn list_image_rels(dir: &str, recursive: bool) -> Result<Vec<String>, String> {
+    Ok(crate::function::fs::collect_image_entries(dir, recursive)?
+        .into_iter()
+        .map(|e| e.path)
+        .collect())
 }
 
 #[cfg(feature = "ssr")]
@@ -237,16 +216,21 @@ pub fn touch_index_tags(rel: &str, tags: &str) {
 }
 
 #[server]
-pub async fn start_meta_index(dir: String, epoch: u64) -> Result<(), ServerFnError> {
+pub async fn start_meta_index(
+    dir: String,
+    epoch: u64,
+    recursive: bool,
+) -> Result<(), ServerFnError> {
     let gen = {
         let mut st = store::lock();
-        if st.gen > 0 && st.dir == dir && st.epoch == epoch {
+        if st.gen > 0 && st.dir == dir && st.epoch == epoch && st.recursive == recursive {
             return Ok(());
         }
         st.gen += 1;
         let gen = st.gen;
         st.dir = dir.clone();
         st.epoch = epoch;
+        st.recursive = recursive;
         st.total = 0;
         st.ready = false;
         st.conn
@@ -255,7 +239,7 @@ pub async fn start_meta_index(dir: String, epoch: u64) -> Result<(), ServerFnErr
         gen
     };
     let scan_dir = dir.clone();
-    let paths = match tokio::task::spawn_blocking(move || list_image_rels(&scan_dir))
+    let paths = match tokio::task::spawn_blocking(move || list_image_rels(&scan_dir, recursive))
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
     {

@@ -193,6 +193,88 @@ pub async fn list_dir(path: String) -> Result<Vec<FsEntry>, ServerFnError> {
     Ok(entries)
 }
 
+#[cfg(feature = "ssr")]
+const MAX_GALLERY_IMAGES: usize = 10_000;
+
+#[cfg(feature = "ssr")]
+pub fn collect_image_entries(rel_dir: &str, recursive: bool) -> Result<Vec<FsEntry>, String> {
+    use std::path::PathBuf;
+
+    let root = resolve_path(rel_dir)?;
+    if !root.is_dir() {
+        return Err("不是目录".into());
+    }
+
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        if out.len() >= MAX_GALLERY_IMAGES {
+            break;
+        }
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut subdirs: Vec<PathBuf> = Vec::new();
+        let mut images: Vec<FsEntry> = Vec::new();
+        for item in read {
+            let Ok(item) = item else {
+                continue;
+            };
+            let name = item.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = item.path();
+            let is_dir = item.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                if recursive {
+                    subdirs.push(path);
+                }
+                continue;
+            }
+            if sniff_file(&path) == FileKind::Image {
+                images.push(FsEntry {
+                    name,
+                    path: to_rel(&path),
+                    is_dir: false,
+                    is_image: true,
+                    is_text: false,
+                });
+            }
+        }
+        images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        for img in images {
+            if out.len() >= MAX_GALLERY_IMAGES {
+                break;
+            }
+            out.push(img);
+        }
+        if recursive {
+            subdirs.sort_by(|a, b| {
+                let an = a
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                let bn = b
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                an.cmp(&bn)
+            });
+            stack.extend(subdirs.into_iter().rev());
+        }
+    }
+    Ok(out)
+}
+
+#[server]
+pub async fn list_images(path: String, recursive: bool) -> Result<Vec<FsEntry>, ServerFnError> {
+    tokio::task::spawn_blocking(move || collect_image_entries(&path, recursive))
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .map_err(ServerFnError::new)
+}
+
 #[server]
 pub async fn read_text_file(path: String) -> Result<String, ServerFnError> {
     if path.is_empty() {

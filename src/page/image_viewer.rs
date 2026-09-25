@@ -1,13 +1,32 @@
 use crate::function::{
     apply_meta_filter, batch_mark_images, export_checked, get_image_rating, get_image_tags,
-    get_meta_index_status, list_dir, media_url, parent_path, preview_url, save_rotated_image, set_image_rating,
-    set_image_tags, start_meta_index, thumb_url,
+    get_meta_index_status, list_images, media_url, parent_path, preview_url, save_rotated_image,
+    set_image_rating, set_image_tags, start_meta_index, thumb_url,
 };
 use crate::structure::{ExplorerState, FsEntry, SelectedItem};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
-use leptos::server_fn::ServerFnError;
+
+const FILMSTRIP_PAGE: usize = 100;
+
+fn apply_image_filter(entries: Vec<FsEntry>, filter: Option<Vec<String>>) -> Vec<FsEntry> {
+    match filter {
+        Some(paths) => entries
+            .into_iter()
+            .filter(|e| paths.iter().any(|p| p == &e.path))
+            .collect(),
+        None => entries,
+    }
+}
+
+fn filmstrip_pages(n: usize) -> usize {
+    if n == 0 {
+        0
+    } else {
+        n.div_ceil(FILMSTRIP_PAGE)
+    }
+}
 
 #[component]
 pub fn ImageViewer() -> impl IntoView {
@@ -20,7 +39,9 @@ pub fn ImageViewer() -> impl IntoView {
     let loaded = RwSignal::new(false);
     let failed = RwSignal::new(false);
     let view_original = RwSignal::new(false);
+    let include_subdirs = RwSignal::new(false);
     let filmstrip_rail = NodeRef::<html::Div>::new();
+    let thumb_page = RwSignal::new(0usize);
 
     Effect::new(move |_| {
         state.viewed.track();
@@ -46,24 +67,52 @@ pub fn ImageViewer() -> impl IntoView {
     });
 
     let gallery = Resource::new(
-        move || (gallery_dir.get(), state.refresh.get()),
-        |(dir, _)| async move {
-            let entries = list_dir(dir).await?;
-            Ok::<Vec<FsEntry>, ServerFnError>(
-                entries.into_iter().filter(|e| e.is_image).collect(),
-            )
-        },
+        move || (gallery_dir.get(), state.refresh.get(), include_subdirs.get()),
+        |(dir, _, recursive)| async move { list_images(dir, recursive).await },
     );
 
     Effect::new(move |_| {
         let dir = gallery_dir.get();
         let epoch = state.refresh.get();
+        let recursive = include_subdirs.get();
         state.filter_paths.set(None);
         leptos::task::spawn_local(async move {
-            if let Err(e) = start_meta_index(dir, epoch).await {
+            if let Err(e) = start_meta_index(dir, epoch, recursive).await {
                 state.status.set(format!("读取元数据失败：{e}"));
             }
         });
+    });
+
+    Effect::new(move |_| {
+        gallery_dir.track();
+        state.filter_paths.track();
+        state.refresh.track();
+        include_subdirs.track();
+        thumb_page.set(0);
+    });
+
+    Effect::new(move |_| {
+        let Some(current) = state.viewed.get() else {
+            return;
+        };
+        let Some(Ok(entries)) = gallery.get() else {
+            return;
+        };
+        let shown = apply_image_filter(entries, state.filter_paths.get());
+        let Some(idx) = shown.iter().position(|e| e.path == current) else {
+            return;
+        };
+        let page = idx / FILMSTRIP_PAGE;
+        if thumb_page.get_untracked() != page {
+            thumb_page.set(page);
+        }
+    });
+
+    Effect::new(move |_| {
+        thumb_page.track();
+        if let Some(el) = filmstrip_rail.get() {
+            el.set_scroll_left(0);
+        }
     });
 
     let saving = RwSignal::new(false);
@@ -94,9 +143,10 @@ pub fn ImageViewer() -> impl IntoView {
         let Some(current) = state.viewed.get() else {
             return;
         };
-        let Some(Ok(list)) = gallery.get() else {
+        let Some(Ok(entries)) = gallery.get() else {
             return;
         };
+        let list = apply_image_filter(entries, state.filter_paths.get());
         let Some(idx) = list.iter().position(|e| e.path == current) else {
             return;
         };
@@ -173,6 +223,19 @@ pub fn ImageViewer() -> impl IntoView {
                         }
                     />
                     "原图"
+                </label>
+                <label
+                    class="orig-check"
+                    title="勾选后缩略图与筛选包含当前目录下所有子目录中的图片"
+                >
+                    <input
+                        type="checkbox"
+                        prop:checked=move || include_subdirs.get()
+                        on:change=move |ev| {
+                            include_subdirs.set(event_target_checked(&ev));
+                        }
+                    />
+                    "包括子目录"
                 </label>
             </div>
             <div
@@ -325,48 +388,23 @@ pub fn ImageViewer() -> impl IntoView {
                     gallery.get().and_then(|res| match res {
                         Ok(entries) if entries.is_empty() => None,
                         Ok(entries) => {
-                            let shown = match state.filter_paths.get() {
-                                Some(paths) => entries
-                                    .into_iter()
-                                    .filter(|e| paths.iter().any(|p| p == &e.path))
-                                    .collect::<Vec<_>>(),
-                                None => entries,
-                            };
-                            Some({
-                                let shown = shown.clone();
-                                view! {
-                                    <Show when=move || state.show_thumbnails.get()>
-                                        <div
-                                            class="filmstrip-rail"
-                                            node_ref=filmstrip_rail
-                                            on:wheel=move |ev: ev::WheelEvent| {
-                                                let dx = if ev.delta_x().abs() > ev.delta_y().abs() {
-                                                    ev.delta_x()
-                                                } else {
-                                                    ev.delta_y()
-                                                };
-                                                if dx == 0.0 {
-                                                    return;
-                                                }
-                                                ev.prevent_default();
-                                                if let Some(el) = filmstrip_rail.get() {
-                                                    el.set_scroll_left(
-                                                        ((el.scroll_left() as f64) + dx).round() as i32,
-                                                    );
-                                                }
-                                            }
-                                        >
-                                            <div class="filmstrip">
-                                                {shown
-                                                    .clone()
-                                                    .into_iter()
-                                                    .map(|entry| view! { <Thumb entry/> })
-                                                    .collect_view()}
-                                            </div>
-                                        </div>
-                                    </Show>
-                                }
-                            })
+                            let shown = apply_image_filter(entries, state.filter_paths.get());
+                            if shown.is_empty() {
+                                None
+                            } else {
+                                Some(
+                                    view! {
+                                        <Show when=move || state.show_thumbnails.get()>
+                                            <FilmstripRail
+                                                entries=shown.clone()
+                                                thumb_page=thumb_page
+                                                rail_ref=filmstrip_rail
+                                            />
+                                        </Show>
+                                    }
+                                    .into_any(),
+                                )
+                            }
                         }
                         Err(_) => None,
                     })
@@ -922,6 +960,106 @@ fn StarButton(
 }
 
 #[component]
+fn FilmstripRail(
+    entries: Vec<FsEntry>,
+    thumb_page: RwSignal<usize>,
+    rail_ref: NodeRef<html::Div>,
+) -> impl IntoView {
+    let entries = StoredValue::new(entries);
+
+    view! {
+        <div
+            class="filmstrip-rail"
+            node_ref=rail_ref
+            on:wheel=move |ev: ev::WheelEvent| {
+                let dx = if ev.delta_x().abs() > ev.delta_y().abs() {
+                    ev.delta_x()
+                } else {
+                    ev.delta_y()
+                };
+                if dx == 0.0 {
+                    return;
+                }
+                ev.prevent_default();
+                if let Some(el) = rail_ref.get() {
+                    el.set_scroll_left(((el.scroll_left() as f64) + dx).round() as i32);
+                }
+            }
+        >
+            {move || {
+                let n = entries.with_value(|e| e.len());
+                let pages = filmstrip_pages(n);
+                let last = pages.saturating_sub(1);
+                let page = thumb_page.get().min(last);
+                let start = page * FILMSTRIP_PAGE;
+                let end = (start + FILMSTRIP_PAGE).min(n);
+                let slice = entries.with_value(|e| e[start..end].to_vec());
+                let page_disp = page + 1;
+                view! {
+                    <div class="filmstrip">
+                        {if page > 0 {
+                            Some(view! {
+                                <FilmstripPageBtn
+                                    label="上一页"
+                                    current=page_disp
+                                    total=pages
+                                    on_click=move || {
+                                        thumb_page.update(|p| *p = p.saturating_sub(1));
+                                    }
+                                />
+                            })
+                        } else {
+                            None
+                        }}
+                        {slice
+                            .into_iter()
+                            .map(|entry| view! { <Thumb entry/> })
+                            .collect_view()}
+                        {if pages > 1 && page < last {
+                            Some(view! {
+                                <FilmstripPageBtn
+                                    label="下一页"
+                                    current=page_disp
+                                    total=pages
+                                    on_click=move || {
+                                        thumb_page.update(|p| *p = (*p + 1).min(last));
+                                    }
+                                />
+                            })
+                        } else {
+                            None
+                        }}
+                    </div>
+                }
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn FilmstripPageBtn<F>(
+    label: &'static str,
+    current: usize,
+    total: usize,
+    on_click: F,
+) -> impl IntoView
+where
+    F: Fn() + 'static + Copy,
+{
+    view! {
+        <button
+            type="button"
+            class="filmstrip-page"
+            title=label
+            on:click=move |_| on_click()
+        >
+            <span class="filmstrip-page-label">{label}</span>
+            <span class="filmstrip-page-num">{format!("{current}/{total}")}</span>
+        </button>
+    }
+}
+
+#[component]
 fn Thumb(entry: FsEntry) -> impl IntoView {
     let state = expect_context::<ExplorerState>();
     let path = entry.path.clone();
@@ -956,7 +1094,7 @@ fn Thumb(entry: FsEntry) -> impl IntoView {
             class="thumb"
             class:is-active=move || state.viewed.get().as_deref() == Some(path_active.as_str())
             class:is-checked=move || state.is_checked(&path_checked_class)
-            title=name.clone()
+            title=path.clone()
         >
             <label
                 class="thumb-check"
