@@ -157,6 +157,14 @@ pub fn FilePane() -> impl IntoView {
                         "粘贴"
                     </button>
                     <button
+                        class="btn"
+                        title="按序号批量重命名已勾选的文件"
+                        disabled=no_checked
+                        on:click=move |_| state.request_batch_rename()
+                    >
+                        "重命名"
+                    </button>
+                    <button
                         class="btn btn-danger-ghost"
                         title="删除勾选的项目"
                         disabled=move || no_checked() || state.busy.get()

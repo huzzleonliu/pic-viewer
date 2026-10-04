@@ -5,7 +5,9 @@ use crate::page::file_tree::FilePane;
 use crate::page::image_viewer::ImageViewer;
 use crate::page::text_editor::TextEditor;
 use crate::structure::ExplorerState;
-use dialogs::{ConfirmDelete, FailureDialog, MkdirDialog, MkfileDialog, RenameDialog};
+use dialogs::{
+    BatchRenameDialog, ConfirmDelete, FailureDialog, MkdirDialog, MkfileDialog, RenameDialog,
+};
 use leptos::prelude::*;
 
 #[component]
@@ -78,6 +80,7 @@ pub fn Explorer() -> impl IntoView {
             </footer>
             <ConfirmDelete/>
             <RenameDialog/>
+            <BatchRenameDialog/>
             <MkdirDialog/>
             <MkfileDialog/>
             <FailureDialog/>

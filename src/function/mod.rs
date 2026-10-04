@@ -11,11 +11,11 @@ pub use export::export_checked;
 pub use filter::{apply_meta_filter, get_meta_index_status, start_meta_index};
 pub use fs::{
     create_dir, create_file, delete_entry, get_root_info, list_dir, list_images, paste_entry,
-    read_text_file, rename_entry, write_text_file,
+    read_text_file, rename_entries_numbered, rename_entry, write_text_file,
 };
 pub use path::{
-    is_image_name, join_rel, media_url, parent_path, preview_url, rel_name, rewrite_prefix,
-    thumb_url, validate_file_name,
+    is_image_name, join_rel, media_url, number_run, numbered_file_name, parent_path, preview_url,
+    rel_name, rewrite_prefix, thumb_url, validate_file_name, validate_rename_prefix,
 };
 pub use rating::{
     batch_mark_images, get_image_rating, get_image_tags, set_image_rating, set_image_tags,

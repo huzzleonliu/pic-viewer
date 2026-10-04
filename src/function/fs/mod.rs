@@ -7,7 +7,9 @@ mod sandbox;
 mod text;
 
 pub use list::{get_root_info, list_dir, list_images};
-pub use ops::{create_dir, create_file, delete_entry, paste_entry, rename_entry};
+pub use ops::{
+    create_dir, create_file, delete_entry, paste_entry, rename_entries_numbered, rename_entry,
+};
 pub use text::{read_text_file, write_text_file};
 
 #[cfg(feature = "ssr")]

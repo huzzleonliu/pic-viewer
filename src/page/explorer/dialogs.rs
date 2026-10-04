@@ -85,6 +85,102 @@ pub(crate) fn RenameDialog() -> impl IntoView {
 }
 
 #[component]
+pub(crate) fn BatchRenameDialog() -> impl IntoView {
+    let state = expect_context::<ExplorerState>();
+
+    view! {
+        <Show when=move || state.batch_rename.get().is_some()>
+            <div class="modal-backdrop" on:click=move |_| state.batch_rename.set(None)>
+                <div class="modal" on:click=move |ev| ev.stop_propagation()>
+                    <h2>"批量重命名"</h2>
+                    <p>
+                        {move || {
+                            state.batch_rename.get().map(|d| {
+                                format!(
+                                    "按勾选顺序重命名 {} 个文件，扩展名不变。名称可留空（只要序号）。起始数到结束数的个数须与文件数相同。",
+                                    d.file_count
+                                )
+                            }).unwrap_or_default()
+                        }}
+                    </p>
+                    <label class="modal-field">
+                        <span>"名称"</span>
+                        <input
+                            class="modal-input"
+                            type="text"
+                            autofocus
+                            placeholder="可留空"
+                            prop:value=move || {
+                                state.batch_rename.get().map(|d| d.name).unwrap_or_default()
+                            }
+                            on:input=move |ev| {
+                                let value = event_target_value(&ev);
+                                state.batch_rename.update(|opt| {
+                                    if let Some(d) = opt {
+                                        d.name = value;
+                                    }
+                                });
+                            }
+                        />
+                    </label>
+                    <label class="modal-field">
+                        <span>"起始数"</span>
+                        <input
+                            class="modal-input"
+                            type="text"
+                            inputmode="numeric"
+                            prop:value=move || {
+                                state.batch_rename.get().map(|d| d.start).unwrap_or_default()
+                            }
+                            on:input=move |ev| {
+                                let value = event_target_value(&ev);
+                                state.batch_rename.update(|opt| {
+                                    if let Some(d) = opt {
+                                        d.start = value;
+                                    }
+                                });
+                            }
+                        />
+                    </label>
+                    <label class="modal-field">
+                        <span>"结束数"</span>
+                        <input
+                            class="modal-input"
+                            type="text"
+                            inputmode="numeric"
+                            prop:value=move || {
+                                state.batch_rename.get().map(|d| d.end).unwrap_or_default()
+                            }
+                            on:input=move |ev| {
+                                let value = event_target_value(&ev);
+                                state.batch_rename.update(|opt| {
+                                    if let Some(d) = opt {
+                                        d.end = value;
+                                    }
+                                });
+                            }
+                        />
+                    </label>
+                    <div class="modal-actions">
+                        <button class="btn" on:click=move |_| state.batch_rename.set(None)>
+                            "取消"
+                        </button>
+                        <button
+                            class="btn"
+                            disabled=move || state.busy.get()
+                            on:click=move |_| state.confirm_batch_rename()
+                        >
+                            "确定"
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Show>
+    }
+    .into_any()
+}
+
+#[component]
 pub(crate) fn MkdirDialog() -> impl IntoView {
     let state = expect_context::<ExplorerState>();
 

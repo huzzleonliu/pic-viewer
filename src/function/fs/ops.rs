@@ -61,6 +61,117 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<String, Serv
 }
 
 #[server]
+pub async fn rename_entries_numbered(
+    paths: Vec<String>,
+    prefix: String,
+    start: i32,
+    end: i32,
+) -> Result<crate::structure::BatchRenameReport, ServerFnError> {
+    use crate::function::path::{
+        number_run, numbered_file_name, rel_name, validate_file_name, validate_rename_prefix,
+    };
+    use crate::structure::{BatchRenameReport, FailureItem};
+
+    let prefix = validate_rename_prefix(&prefix).map_err(ServerFnError::new)?;
+    let nums = number_run(start, end);
+    if nums.len() != paths.len() {
+        return Err(ServerFnError::new(format!(
+            "序号个数（{}）与文件数（{}）不一致",
+            nums.len(),
+            paths.len()
+        )));
+    }
+    if paths.is_empty() {
+        return Ok(BatchRenameReport {
+            ok: 0,
+            renamed: Vec::new(),
+            failures: Vec::new(),
+        });
+    }
+
+    let mut desired = Vec::with_capacity(paths.len());
+    for (path, n) in paths.iter().zip(nums.iter().copied()) {
+        if path.is_empty() {
+            return Err(ServerFnError::new("不能重命名根目录"));
+        }
+        let from = resolve_path(path).map_err(ServerFnError::new)?;
+        if from == pic_root() {
+            return Err(ServerFnError::new("不能重命名根目录"));
+        }
+        if !from.is_file() {
+            return Err(ServerFnError::new(format!("{} 不是文件", rel_name(path))));
+        }
+        let orig = from
+            .file_name()
+            .ok_or_else(|| ServerFnError::new("非法路径"))?
+            .to_string_lossy()
+            .into_owned();
+        let new_name = numbered_file_name(&prefix, n, &orig);
+        validate_file_name(&new_name).map_err(ServerFnError::new)?;
+        let parent = from
+            .parent()
+            .ok_or_else(|| ServerFnError::new("非法路径"))?;
+        let dest = parent.join(&new_name);
+        if !dest.starts_with(pic_root()) {
+            return Err(ServerFnError::new("路径越界"));
+        }
+        desired.push((from, new_name));
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut parked: Vec<(std::path::PathBuf, std::path::PathBuf, String, String)> = Vec::new();
+    for (i, (from, new_name)) in desired.into_iter().enumerate() {
+        let parent = from
+            .parent()
+            .ok_or_else(|| ServerFnError::new("非法路径"))?;
+        let old_rel = to_rel(&from);
+        let tmp = unique_dest(parent, &format!(".__pv_ren_{stamp}_{i}"));
+        if let Err(e) = std::fs::rename(&from, &tmp) {
+            for (orig, temp, _, _) in parked.iter().rev() {
+                let _ = std::fs::rename(temp, orig);
+            }
+            return Err(ServerFnError::new(e.to_string()));
+        }
+        parked.push((from, tmp, new_name, old_rel));
+    }
+
+    let mut renamed = Vec::new();
+    let mut failures = Vec::new();
+    for (orig, tmp, new_name, old_rel) in parked {
+        let parent = match tmp.parent() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                failures.push(FailureItem {
+                    file: old_rel,
+                    error: "非法路径".into(),
+                });
+                continue;
+            }
+        };
+        let dest = unique_dest(&parent, &new_name);
+        match std::fs::rename(&tmp, &dest) {
+            Ok(()) => renamed.push((old_rel, to_rel(&dest))),
+            Err(e) => {
+                let _ = std::fs::rename(&tmp, &orig);
+                failures.push(FailureItem {
+                    file: old_rel,
+                    error: e.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(BatchRenameReport {
+        ok: renamed.len() as u32,
+        renamed,
+        failures,
+    })
+}
+
+#[server]
 pub async fn create_dir(parent: String, name: String) -> Result<String, ServerFnError> {
     let name = name.trim().to_string();
     crate::function::path::validate_file_name(&name).map_err(ServerFnError::new)?;

@@ -1,8 +1,10 @@
 use crate::function::fs::{
-    create_dir, create_file, delete_entry, list_dir, paste_entry, rename_entry,
+    create_dir, create_file, delete_entry, list_dir, paste_entry, rename_entries_numbered,
+    rename_entry,
 };
 use crate::function::path::{
-    is_image_name, parent_path, rel_name, rewrite_prefix, validate_file_name,
+    is_image_name, number_run, parent_path, rel_name, rewrite_prefix, validate_file_name,
+    validate_rename_prefix,
 };
 use crate::structure::{Clipboard, ClipboardItem, ClipboardMode, ExplorerState, SelectedItem};
 use leptos::prelude::*;
@@ -317,6 +319,102 @@ impl ExplorerState {
                     self.status.set(format!("已重命名为：{name}"));
                 }
                 Err(e) => self.status.set(format!("重命名失败：{e}")),
+            }
+            self.busy.set(false);
+        });
+    }
+
+    pub fn request_batch_rename(self) {
+        let files: Vec<SelectedItem> = self.checked.with(|list| {
+            list.iter()
+                .filter(|item| !item.path.is_empty() && !item.is_dir)
+                .cloned()
+                .collect()
+        });
+        if files.is_empty() {
+            self.status
+                .set("没有可重命名的文件（目录不参与批量重命名）".into());
+            return;
+        }
+        let n = files.len();
+        self.batch_rename
+            .set(Some(crate::structure::BatchRenameDraft {
+                name: String::new(),
+                start: "1".into(),
+                end: n.to_string(),
+                file_count: n,
+            }));
+    }
+
+    pub fn confirm_batch_rename(self) {
+        let Some(draft) = self.batch_rename.get() else {
+            return;
+        };
+        if self.busy.get() {
+            return;
+        }
+        let prefix = match validate_rename_prefix(&draft.name) {
+            Ok(name) => name,
+            Err(err) => {
+                self.status.set(err);
+                return;
+            }
+        };
+        let start = match draft.start.trim().parse::<i32>() {
+            Ok(n) => n,
+            Err(_) => {
+                self.status.set("起始数不是整数".into());
+                return;
+            }
+        };
+        let end = match draft.end.trim().parse::<i32>() {
+            Ok(n) => n,
+            Err(_) => {
+                self.status.set("结束数不是整数".into());
+                return;
+            }
+        };
+        let nums = number_run(start, end);
+        let files: Vec<SelectedItem> = self.checked.with(|list| {
+            list.iter()
+                .filter(|item| !item.path.is_empty() && !item.is_dir)
+                .cloned()
+                .collect()
+        });
+        if files.is_empty() {
+            self.status.set("没有可重命名的文件".into());
+            return;
+        }
+        if nums.len() != files.len() {
+            self.status.set(format!(
+                "序号个数（{}）与已选文件数（{}）不一致",
+                nums.len(),
+                files.len()
+            ));
+            return;
+        }
+        let paths: Vec<String> = files.into_iter().map(|item| item.path).collect();
+        self.busy.set(true);
+        leptos::task::spawn_local(async move {
+            match rename_entries_numbered(paths, prefix, start, end).await {
+                Ok(report) => {
+                    for (old, new) in &report.renamed {
+                        self.retarget_path(old, new);
+                    }
+                    self.batch_rename.set(None);
+                    self.refresh.update(|n| *n += 1);
+                    if report.failures.is_empty() {
+                        self.status.set(format!("已重命名 {} 个文件", report.ok));
+                    } else {
+                        self.status.set(format!(
+                            "已重命名 {}/{} 个文件",
+                            report.ok,
+                            report.ok as usize + report.failures.len()
+                        ));
+                        self.report_failures("批量重命名失败", report.failures);
+                    }
+                }
+                Err(e) => self.status.set(format!("批量重命名失败：{e}")),
             }
             self.busy.set(false);
         });

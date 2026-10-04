@@ -877,6 +877,22 @@ body {
   border-color: var(--accent);
 }
 
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0 0 0.75rem;
+}
+
+.modal-field > span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.modal-field .modal-input {
+  margin-bottom: 0;
+}
+
 .modal-wide {
   width: min(560px, calc(100vw - 2rem));
 }
@@ -1024,6 +1040,11 @@ body {
   tab-size: 4;
   white-space: pre;
   overflow: auto;
+}
+
+.editor-textarea.is-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .editor-empty {

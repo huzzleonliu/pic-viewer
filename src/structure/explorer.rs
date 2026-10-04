@@ -167,10 +167,25 @@ pub struct FailureItem {
     pub error: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BatchRenameReport {
+    pub ok: u32,
+    pub renamed: Vec<(String, String)>,
+    pub failures: Vec<FailureItem>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailureReport {
     pub title: String,
     pub failures: Vec<FailureItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchRenameDraft {
+    pub name: String,
+    pub start: String,
+    pub end: String,
+    pub file_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -185,6 +200,7 @@ pub struct ExplorerState {
     pub confirm_delete: RwSignal<Option<Vec<SelectedItem>>>,
     pub rename_target: RwSignal<Option<SelectedItem>>,
     pub rename_draft: RwSignal<String>,
+    pub batch_rename: RwSignal<Option<BatchRenameDraft>>,
     pub mkdir_parent: RwSignal<Option<String>>,
     pub mkdir_draft: RwSignal<String>,
     pub mkfile_parent: RwSignal<Option<String>>,
@@ -200,6 +216,7 @@ pub struct ExplorerState {
     pub editor_font_size: RwSignal<u32>,
     pub editor_light: RwSignal<bool>,
     pub editor_line_numbers: RwSignal<bool>,
+    pub editor_word_wrap: RwSignal<bool>,
     pub filter_paths: RwSignal<Option<HashSet<String>>>,
     pub failure_report: RwSignal<Option<FailureReport>>,
     pub expanded_dirs: RwSignal<HashSet<String>>,
@@ -218,6 +235,7 @@ impl ExplorerState {
             confirm_delete: RwSignal::new(None),
             rename_target: RwSignal::new(None),
             rename_draft: RwSignal::new(String::new()),
+            batch_rename: RwSignal::new(None),
             mkdir_parent: RwSignal::new(None),
             mkdir_draft: RwSignal::new(String::new()),
             mkfile_parent: RwSignal::new(None),
@@ -233,6 +251,7 @@ impl ExplorerState {
             editor_font_size: RwSignal::new(15),
             editor_light: RwSignal::new(false),
             editor_line_numbers: RwSignal::new(true),
+            editor_word_wrap: RwSignal::new(false),
             filter_paths: RwSignal::new(None),
             failure_report: RwSignal::new(None),
             expanded_dirs: RwSignal::new(HashSet::from([String::new()])),
