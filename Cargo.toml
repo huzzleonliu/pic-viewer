@@ -27,6 +27,7 @@ image = { version = "0.25", optional = true, default-features = false, features 
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls", "stream"] }
 base64 = { version = "0.22", optional = true }
+webp = { version = "0.3", optional = true, default-features = false }
 web-sys = { version = "0.3", optional = true, features = [
     "Window",
     "Navigator",
@@ -59,6 +60,7 @@ ssr = [
     "dep:zip",
     "dep:reqwest",
     "dep:base64",
+    "dep:webp",
     "dep:tokio-util",
     "dep:bytes",
     "dep:futures-util",

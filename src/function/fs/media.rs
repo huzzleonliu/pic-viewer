@@ -217,6 +217,35 @@ async fn serve_imgproxy(path: String, processing: &'static str) -> axum::respons
     }
 }
 
+const COMPRESS_WEBP_PROCESSING: &str = "q:95/f:webp";
+
+pub async fn imgproxy_webp_bytes(rel: &str) -> Result<Vec<u8>, String> {
+    let Some(base) = imgproxy_base() else {
+        return Err("未配置 imgproxy".into());
+    };
+    let _permit = imgproxy_slots()
+        .acquire()
+        .await
+        .map_err(|_| "imgproxy 不可用".to_string())?;
+    let url = imgproxy_fetch_url(&base, rel, COMPRESS_WEBP_PROCESSING);
+    let resp = http_client()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("imgproxy 请求失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("imgproxy 返回 {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取 imgproxy 响应失败：{e}"))?;
+    if !crate::function::sniff::is_webp_bytes(&bytes) {
+        return Err("imgproxy 未返回 WebP".into());
+    }
+    Ok(bytes.to_vec())
+}
+
 #[cfg(feature = "ssr")]
 pub async fn serve_thumb(
     axum::extract::Path(path): axum::extract::Path<String>,

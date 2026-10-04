@@ -165,6 +165,14 @@ pub fn FilePane() -> impl IntoView {
                         "重命名"
                     </button>
                     <button
+                        class="btn"
+                        title="将已勾选图片转为高质量 WebP（约保留八成体积）。WebP、GIF 和非图片会自动跳过"
+                        disabled=move || no_checked() || state.busy.get()
+                        on:click=move |_| state.compress_checked()
+                    >
+                        "压缩图片"
+                    </button>
+                    <button
                         class="btn btn-danger-ghost"
                         title="删除勾选的项目"
                         disabled=move || no_checked() || state.busy.get()

@@ -174,6 +174,14 @@ pub struct BatchRenameReport {
     pub failures: Vec<FailureItem>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompressImagesReport {
+    pub ok: u32,
+    pub skipped: u32,
+    pub converted: Vec<(String, String)>,
+    pub failures: Vec<FailureItem>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailureReport {
     pub title: String,

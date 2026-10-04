@@ -1,3 +1,4 @@
+pub mod compress;
 pub mod explorer;
 pub mod export;
 pub mod filter;
@@ -7,6 +8,7 @@ pub mod rating;
 pub mod rotate;
 pub mod sniff;
 
+pub use compress::compress_checked_images;
 pub use export::export_checked;
 pub use filter::{apply_meta_filter, get_meta_index_status, start_meta_index};
 pub use fs::{
@@ -21,7 +23,7 @@ pub use rating::{
     batch_mark_images, get_image_rating, get_image_tags, set_image_rating, set_image_tags,
 };
 pub use rotate::save_rotated_image;
-pub use sniff::{decode_text, kind_from_ext, kind_from_header, FileKind};
+pub use sniff::{decode_text, kind_from_ext, kind_from_header, skip_compress_to_webp, FileKind};
 
 #[cfg(feature = "ssr")]
 pub use sniff::classify_file;

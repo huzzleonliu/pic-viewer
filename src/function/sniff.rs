@@ -141,6 +141,28 @@ pub fn kind_from_ext(ext: &str) -> Option<FileKind> {
     }
 }
 
+pub fn is_gif_bytes(buf: &[u8]) -> bool {
+    buf.len() >= 6 && (buf.starts_with(b"GIF87a") || buf.starts_with(b"GIF89a"))
+}
+
+pub fn is_webp_bytes(buf: &[u8]) -> bool {
+    buf.len() >= 12 && buf.starts_with(b"RIFF") && &buf[8..12] == b"WEBP"
+}
+
+pub fn is_jpeg_bytes(buf: &[u8]) -> bool {
+    buf.len() >= 3 && buf.starts_with(b"\xff\xd8\xff")
+}
+
+/// WebP / GIF（含扩展名）在批量转 WebP 时应跳过。
+pub fn skip_compress_to_webp(path: &str, header: &[u8]) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(ext.as_str(), "gif" | "webp") || is_gif_bytes(header) || is_webp_bytes(header)
+}
+
 #[cfg(feature = "ssr")]
 pub fn sniff_file(path: &std::path::Path) -> FileKind {
     use std::io::Read;
@@ -164,7 +186,10 @@ pub fn classify_file(path: &std::path::Path) -> FileKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_text, kind_from_ext, kind_from_header, FileKind};
+    use super::{
+        decode_text, is_gif_bytes, is_jpeg_bytes, is_webp_bytes, kind_from_ext, kind_from_header,
+        skip_compress_to_webp, FileKind,
+    };
 
     #[test]
     fn png_jpeg_gif_webp() {
@@ -217,6 +242,22 @@ mod tests {
         assert_eq!(kind_from_ext("txt"), Some(FileKind::Text));
         assert_eq!(kind_from_ext("svg"), None);
         assert_eq!(kind_from_ext("bin"), None);
+    }
+
+    #[test]
+    fn skip_gif_and_webp_for_compress() {
+        assert!(is_gif_bytes(b"GIF89a...."));
+        assert!(is_jpeg_bytes(b"\xff\xd8\xff\xe0...."));
+        let mut webp = [0u8; 16];
+        webp[..4].copy_from_slice(b"RIFF");
+        webp[8..12].copy_from_slice(b"WEBP");
+        assert!(is_webp_bytes(&webp));
+        assert!(skip_compress_to_webp("a.gif", b"\xff\xd8\xff\xe0"));
+        assert!(skip_compress_to_webp("a.WEBP", b"\x89PNG\r\n\x1a\n"));
+        assert!(skip_compress_to_webp("a.jpg", b"GIF87a...."));
+        assert!(skip_compress_to_webp("dir/a.webp", &webp));
+        assert!(!skip_compress_to_webp("a.jpg", b"\xff\xd8\xff\xe0...."));
+        assert!(!skip_compress_to_webp("a.png", b"\x89PNG\r\n\x1a\nrest"));
     }
 
     #[test]

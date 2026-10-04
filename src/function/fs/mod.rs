@@ -15,6 +15,6 @@ pub use text::{read_text_file, write_text_file};
 #[cfg(feature = "ssr")]
 pub use list::{cached_image_scan, ImageRecord, ImageScan};
 #[cfg(feature = "ssr")]
-pub use media::{serve_media, serve_preview, serve_thumb};
+pub use media::{imgproxy_webp_bytes, serve_media, serve_preview, serve_thumb};
 #[cfg(feature = "ssr")]
-pub use sandbox::{mime_for, pic_root, resolve_path, unique_dest};
+pub use sandbox::{mime_for, pic_root, resolve_path, to_rel, unique_dest};

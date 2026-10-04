@@ -1,3 +1,4 @@
+use crate::function::compress::compress_checked_images;
 use crate::function::fs::{
     create_dir, create_file, delete_entry, list_dir, paste_entry, rename_entries_numbered,
     rename_entry,
@@ -472,6 +473,64 @@ impl ExplorerState {
                     set.insert(nk);
                 }
             }
+        });
+        self.filter_paths.update(|opt| {
+            if let Some(set) = opt.as_mut() {
+                let keys: Vec<String> = set.iter().cloned().collect();
+                for k in keys {
+                    let nk = map(&k);
+                    if nk != k {
+                        set.remove(&k);
+                        set.insert(nk);
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn compress_checked(self) {
+        if self.busy.get() {
+            return;
+        }
+        let paths: Vec<String> = self.checked.with(|list| {
+            list.iter()
+                .filter(|item| !item.path.is_empty() && !item.is_dir)
+                .map(|item| item.path.clone())
+                .collect()
+        });
+        if paths.is_empty() {
+            self.status.set("没有可压缩的文件（目录不参与）".into());
+            return;
+        }
+        self.busy.set(true);
+        leptos::task::spawn_local(async move {
+            match compress_checked_images(paths).await {
+                Ok(report) => {
+                    for (old, new) in &report.converted {
+                        self.retarget_path(old, new);
+                    }
+                    self.refresh.update(|n| *n += 1);
+                    self.media_rev.update(|n| *n += 1);
+                    let fail_n = report.failures.len();
+                    if report.ok == 0 && fail_n == 0 {
+                        self.status
+                            .set("没有可压缩的图片（已跳过 WebP、GIF 和非图片）".into());
+                    } else if fail_n == 0 {
+                        self.status.set(format!(
+                            "已压缩 {} 张为 WebP，跳过 {} 张",
+                            report.ok, report.skipped
+                        ));
+                    } else {
+                        self.status.set(format!(
+                            "已压缩 {} 张为 WebP，跳过 {} 张，失败 {} 张",
+                            report.ok, report.skipped, fail_n
+                        ));
+                        self.report_failures("压缩图片失败", report.failures);
+                    }
+                }
+                Err(e) => self.status.set(format!("压缩失败：{e}")),
+            }
+            self.busy.set(false);
         });
     }
 
