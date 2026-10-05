@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedItem {
@@ -201,7 +201,10 @@ pub struct ExplorerState {
     pub selected: RwSignal<Option<SelectedItem>>,
     pub clipboard: RwSignal<Option<Clipboard>>,
     pub checked: RwSignal<CheckedList>,
+    pub check_anchor: RwSignal<Option<String>>,
+    pub dir_listings: RwSignal<HashMap<String, Vec<super::fs::FsEntry>>>,
     pub viewed: RwSignal<Option<String>>,
+    pub browse_dir: RwSignal<Option<String>>,
     pub refresh: RwSignal<u64>,
     pub media_rev: RwSignal<u64>,
     pub status: RwSignal<String>,
@@ -237,7 +240,10 @@ impl ExplorerState {
             selected: RwSignal::new(None),
             clipboard: RwSignal::new(None),
             checked: RwSignal::new(CheckedList::default()),
+            check_anchor: RwSignal::new(None),
+            dir_listings: RwSignal::new(HashMap::new()),
             viewed: RwSignal::new(None),
+            browse_dir: RwSignal::new(None),
             refresh: RwSignal::new(0),
             media_rev: RwSignal::new(0),
             status: RwSignal::new("就绪".into()),

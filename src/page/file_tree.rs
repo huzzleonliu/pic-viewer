@@ -270,13 +270,25 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
         },
     );
 
+    let path_listing = path.clone();
+    Effect::new(move |_| {
+        if !is_dir || !state.is_expanded(&path_listing) {
+            return;
+        }
+        if let Some(Ok(entries)) = children.get() {
+            state.remember_dir_listing(path_listing.clone(), entries);
+        }
+    });
+
     let select = {
         let item = item.clone();
-        move |_| {
-            if item.is_image {
-                state.viewed.set(Some(item.path.clone()));
+        move |ev: leptos::ev::MouseEvent| {
+            let additive = ev.ctrl_key() || ev.meta_key();
+            let shift = ev.shift_key();
+            if shift || additive {
+                ev.prevent_default();
             }
-            state.selected.set(Some(item.clone()));
+            state.on_tree_click(item.clone(), shift, additive);
         }
     };
 
@@ -342,6 +354,7 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                                 return;
                             }
                             state.set_checked(item_check.clone(), event_target_checked(&ev));
+                            state.check_anchor.set(Some(item_check.path.clone()));
                         }
                     />
                 </label>
@@ -402,6 +415,7 @@ fn expand_and_select(
         ev.stop_propagation();
         if item.is_dir {
             state.toggle_expanded(&item.path);
+            state.check_anchor.set(Some(item.path.clone()));
             state.selected.set(Some(item.clone()));
         }
     }

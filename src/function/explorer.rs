@@ -7,8 +7,11 @@ use crate::function::path::{
     is_image_name, number_run, parent_path, rel_name, rewrite_prefix, validate_file_name,
     validate_rename_prefix,
 };
-use crate::structure::{Clipboard, ClipboardItem, ClipboardMode, ExplorerState, SelectedItem};
+use crate::structure::{
+    Clipboard, ClipboardItem, ClipboardMode, ExplorerState, FsEntry, SelectedItem,
+};
 use leptos::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 impl ExplorerState {
     pub fn is_checked(self, path: &str) -> bool {
@@ -23,6 +26,72 @@ impl ExplorerState {
         }
         self.checked.update(|list| {
             list.set_item(item, on);
+        });
+    }
+
+    pub fn remember_dir_listing(self, path: String, entries: Vec<FsEntry>) {
+        let _ = self.dir_listings.try_update(|map| {
+            if map.get(&path) != Some(&entries) {
+                map.insert(path, entries);
+            }
+        });
+    }
+
+    pub fn on_tree_click(self, item: SelectedItem, shift: bool, additive: bool) {
+        if shift {
+            self.apply_check_range(&item, additive);
+            self.selected.set(Some(item));
+            return;
+        }
+        if additive {
+            if !item.path.is_empty() {
+                let on = !self.is_checked(&item.path);
+                self.set_checked(item.clone(), on);
+            }
+            self.check_anchor.set(Some(item.path.clone()));
+            self.selected.set(Some(item));
+            return;
+        }
+        self.check_anchor.set(Some(item.path.clone()));
+        if item.is_dir {
+            let keep = self
+                .viewed
+                .try_get()
+                .flatten()
+                .is_some_and(|path| parent_path(&path) == item.path);
+            if self.browse_dir.try_get().flatten().as_deref() != Some(item.path.as_str()) && !keep {
+                self.viewed.set(None);
+            }
+            self.browse_dir.set(Some(item.path.clone()));
+        } else {
+            self.browse_dir.set(None);
+            if item.is_image {
+                self.viewed.set(Some(item.path.clone()));
+            }
+        }
+        self.selected.set(Some(item));
+    }
+
+    fn apply_check_range(self, item: &SelectedItem, additive: bool) {
+        let expanded = self.expanded_dirs.try_get().unwrap_or_default();
+        let listings = self.dir_listings.try_get().unwrap_or_default();
+        let visible = visible_tree_items(&expanded, &listings);
+        let from = self
+            .check_anchor
+            .try_get()
+            .flatten()
+            .unwrap_or_else(|| item.path.clone());
+        let mut range = checkable_range(&visible, &from, &item.path);
+        if range.is_empty() && !item.path.is_empty() {
+            range.push(item.clone());
+        }
+        self.checked.update(|list| {
+            if !additive {
+                list.clear();
+            }
+            for it in range {
+                list.insert_missing(it);
+            }
         });
     }
 
@@ -488,6 +557,18 @@ impl ExplorerState {
                 }
             }
         });
+        if let Some(anchor) = self.check_anchor.get() {
+            let na = map(&anchor);
+            if na != anchor {
+                self.check_anchor.set(Some(na));
+            }
+        }
+        if let Some(dir) = self.browse_dir.get() {
+            let nd = map(&dir);
+            if nd != dir {
+                self.browse_dir.set(Some(nd));
+            }
+        }
     }
 
     pub fn compress_checked(self) {
@@ -602,6 +683,30 @@ impl ExplorerState {
         if self.selected.get().as_ref().map(|s| s.path.as_str()) == Some(path) {
             self.selected.set(None);
         }
+        if self.check_anchor.get().as_deref() == Some(path) {
+            self.check_anchor.set(None);
+        } else if !path.is_empty() {
+            let prefix = format!("{path}/");
+            if self
+                .check_anchor
+                .get()
+                .is_some_and(|a| a.starts_with(&prefix))
+            {
+                self.check_anchor.set(None);
+            }
+        }
+        if self.browse_dir.get().as_deref() == Some(path) {
+            self.browse_dir.set(None);
+        } else if !path.is_empty() {
+            let prefix = format!("{path}/");
+            if self
+                .browse_dir
+                .get()
+                .is_some_and(|d| d.starts_with(&prefix))
+            {
+                self.browse_dir.set(None);
+            }
+        }
         self.checked.update(|list| list.retain(|i| i.path != path));
         if let Some(clip) = self.clipboard.get() {
             let items: Vec<_> = clip.items.into_iter().filter(|i| i.path != path).collect();
@@ -620,5 +725,197 @@ impl ExplorerState {
                 set.retain(|p| p != path && !p.starts_with(&prefix));
             });
         }
+    }
+}
+
+pub(crate) fn visible_tree_items(
+    expanded: &HashSet<String>,
+    listings: &HashMap<String, Vec<FsEntry>>,
+) -> Vec<SelectedItem> {
+    let mut out = vec![SelectedItem::root()];
+    walk_visible("", expanded, listings, &mut out);
+    out
+}
+
+fn walk_visible(
+    path: &str,
+    expanded: &HashSet<String>,
+    listings: &HashMap<String, Vec<FsEntry>>,
+    out: &mut Vec<SelectedItem>,
+) {
+    if !expanded.contains(path) {
+        return;
+    }
+    let Some(children) = listings.get(path) else {
+        return;
+    };
+    for child in children {
+        out.push(SelectedItem::from(child));
+        if child.is_dir {
+            walk_visible(&child.path, expanded, listings, out);
+        }
+    }
+}
+
+pub(crate) fn checkable_range(visible: &[SelectedItem], from: &str, to: &str) -> Vec<SelectedItem> {
+    let find = |p: &str| visible.iter().position(|item| item.path == p);
+    match (find(from), find(to)) {
+        (Some(i), Some(j)) => {
+            let (a, b) = if i <= j { (i, j) } else { (j, i) };
+            visible[a..=b]
+                .iter()
+                .filter(|item| !item.path.is_empty())
+                .cloned()
+                .collect()
+        }
+        (_, Some(_)) => visible
+            .iter()
+            .filter(|item| item.path == to && !item.path.is_empty())
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn gallery_dir_from(
+    browse_dir: Option<&str>,
+    selected: Option<&SelectedItem>,
+    viewed: Option<&str>,
+) -> String {
+    if let Some(dir) = browse_dir {
+        return dir.to_string();
+    }
+    if let Some(path) = viewed {
+        return parent_path(path);
+    }
+    match selected {
+        Some(s) if s.is_dir => s.path.clone(),
+        Some(s) => parent_path(&s.path),
+        None => String::new(),
+    }
+}
+
+pub(crate) fn next_viewed_for_dir(shown: &[String], current: Option<&str>) -> Option<String> {
+    if shown.is_empty() {
+        None
+    } else if current.is_some_and(|p| shown.iter().any(|x| x == p)) {
+        current.map(str::to_string)
+    } else {
+        shown.first().cloned()
+    }
+}
+
+#[cfg(test)]
+mod tree_select_tests {
+    use super::{checkable_range, gallery_dir_from, next_viewed_for_dir, visible_tree_items};
+    use crate::structure::{FsEntry, SelectedItem};
+    use std::collections::{HashMap, HashSet};
+
+    fn entry(path: &str, is_dir: bool) -> FsEntry {
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        FsEntry {
+            name,
+            path: path.to_string(),
+            is_dir,
+            is_image: !is_dir && path.ends_with(".jpg"),
+            is_text: !is_dir && path.ends_with(".txt"),
+        }
+    }
+
+    fn sample() -> (HashSet<String>, HashMap<String, Vec<FsEntry>>) {
+        let mut listings = HashMap::new();
+        listings.insert(
+            String::new(),
+            vec![entry("photos", true), entry("readme.txt", false)],
+        );
+        listings.insert(
+            "photos".into(),
+            vec![entry("photos/a.jpg", false), entry("photos/b.jpg", false)],
+        );
+        (HashSet::from([String::new()]), listings)
+    }
+
+    #[test]
+    fn flatten_skips_collapsed_children() {
+        let (expanded, listings) = sample();
+        let paths: Vec<_> = visible_tree_items(&expanded, &listings)
+            .into_iter()
+            .map(|item| item.path)
+            .collect();
+        assert_eq!(paths, ["", "photos", "readme.txt"]);
+    }
+
+    #[test]
+    fn flatten_includes_expanded_children() {
+        let (mut expanded, listings) = sample();
+        expanded.insert("photos".into());
+        let paths: Vec<_> = visible_tree_items(&expanded, &listings)
+            .into_iter()
+            .map(|item| item.path)
+            .collect();
+        assert_eq!(
+            paths,
+            ["", "photos", "photos/a.jpg", "photos/b.jpg", "readme.txt"]
+        );
+    }
+
+    #[test]
+    fn range_is_inclusive_and_skips_root() {
+        let (mut expanded, listings) = sample();
+        expanded.insert("photos".into());
+        let visible = visible_tree_items(&expanded, &listings);
+        let paths: Vec<_> = checkable_range(&visible, "", "photos/b.jpg")
+            .into_iter()
+            .map(|item| item.path)
+            .collect();
+        assert_eq!(paths, ["photos", "photos/a.jpg", "photos/b.jpg"]);
+    }
+
+    #[test]
+    fn range_works_backwards() {
+        let (expanded, listings) = sample();
+        let visible = visible_tree_items(&expanded, &listings);
+        let paths: Vec<_> = checkable_range(&visible, "readme.txt", "photos")
+            .into_iter()
+            .map(|item| item.path)
+            .collect();
+        assert_eq!(paths, ["photos", "readme.txt"]);
+    }
+
+    #[test]
+    fn gallery_follows_browse_dir_over_viewed() {
+        let image = SelectedItem::from_image_path("photos/a.jpg".into());
+        assert_eq!(
+            gallery_dir_from(Some("animals"), Some(&image), Some("photos/a.jpg")),
+            "animals"
+        );
+        assert_eq!(
+            gallery_dir_from(None, Some(&image), Some("photos/a.jpg")),
+            "photos"
+        );
+        assert_eq!(gallery_dir_from(Some(""), None, None), "");
+    }
+
+    #[test]
+    fn dir_without_images_clears_viewed() {
+        assert_eq!(next_viewed_for_dir(&[], Some("a.jpg")), None);
+        assert_eq!(next_viewed_for_dir(&[], None), None);
+    }
+
+    #[test]
+    fn dir_with_images_keeps_or_opens_first() {
+        let shown = vec!["photos/a.jpg".into(), "photos/b.jpg".into()];
+        assert_eq!(
+            next_viewed_for_dir(&shown, Some("photos/b.jpg")).as_deref(),
+            Some("photos/b.jpg")
+        );
+        assert_eq!(
+            next_viewed_for_dir(&shown, Some("other.jpg")).as_deref(),
+            Some("photos/a.jpg")
+        );
+        assert_eq!(
+            next_viewed_for_dir(&shown, None).as_deref(),
+            Some("photos/a.jpg")
+        );
     }
 }

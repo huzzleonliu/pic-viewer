@@ -5,9 +5,10 @@ mod filter_bar;
 mod mark_bar;
 
 use crate::function::crop::{fitted_norm, CropRect};
+use crate::function::explorer::{gallery_dir_from, next_viewed_for_dir};
 use crate::function::{
-    list_images, media_url, parent_path, preview_url, rel_name, save_cropped_image,
-    save_rotated_image, start_meta_index,
+    list_images, media_url, preview_url, rel_name, save_cropped_image, save_rotated_image,
+    start_meta_index,
 };
 use crate::structure::{ExplorerState, SelectedItem};
 use crop_overlay::CropOverlay;
@@ -62,17 +63,11 @@ pub fn ImageViewer() -> impl IntoView {
     });
 
     let gallery_dir = Memo::new(move |_| {
-        if let Some(path) = state.viewed.get() {
-            parent_path(&path)
-        } else if let Some(s) = state.selected.get() {
-            if s.is_dir {
-                s.path
-            } else {
-                parent_path(&s.path)
-            }
-        } else {
-            String::new()
-        }
+        gallery_dir_from(
+            state.browse_dir.get().as_deref(),
+            state.selected.get().as_ref(),
+            state.viewed.get().as_deref(),
+        )
     });
 
     let gallery = Resource::new(
@@ -104,6 +99,21 @@ pub fn ImageViewer() -> impl IntoView {
         state.refresh.track();
         include_subdirs.track();
         thumb_page.set(0);
+    });
+
+    Effect::new(move |_| {
+        if state.browse_dir.try_get().flatten().is_none() {
+            return;
+        }
+        let Some(Ok(list)) = gallery.get() else {
+            return;
+        };
+        let shown = apply_path_filter(list.paths, state.filter_paths.get());
+        let current = state.viewed.try_get().flatten();
+        let next = next_viewed_for_dir(&shown, current.as_deref());
+        if current.as_deref() != next.as_deref() {
+            state.viewed.set(next);
+        }
     });
 
     Effect::new(move |_| {
