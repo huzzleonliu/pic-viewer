@@ -35,6 +35,7 @@ pub fn Explorer() -> impl IntoView {
                             <PanelToggle label="筛选" on=state.show_filter/>
                             <PanelToggle label="导出" on=state.show_export/>
                             <PanelToggle label="简单调整" on=state.show_adjust/>
+                            <PanelToggle label="裁剪" on=state.show_crop/>
                         </span>
                     </Show>
                     <Show when=move || state.is_text_mode()>

@@ -18,7 +18,12 @@ pub(crate) fn MarkBar() -> impl IntoView {
     let tag_input = NodeRef::<html::Textarea>::new();
 
     let rating = Resource::new(
-        move || (state.viewed.get(), reload.get()),
+        move || {
+            (
+                state.viewed.try_get().flatten(),
+                reload.try_get().unwrap_or(0),
+            )
+        },
         |(path, _)| async move {
             match path {
                 Some(p) => get_image_rating(p).await,
@@ -28,7 +33,7 @@ pub(crate) fn MarkBar() -> impl IntoView {
     );
 
     let tag_res = Resource::new(
-        move || state.viewed.get(),
+        move || state.viewed.try_get().flatten(),
         |path| async move {
             match path {
                 Some(p) => get_image_tags(p).await,

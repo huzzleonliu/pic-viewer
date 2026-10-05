@@ -12,7 +12,9 @@ use leptos::prelude::*;
 
 impl ExplorerState {
     pub fn is_checked(self, path: &str) -> bool {
-        self.checked.with(|list| list.contains(path))
+        self.checked
+            .try_with(|list| list.contains(path))
+            .unwrap_or(false)
     }
 
     pub fn set_checked(self, item: SelectedItem, on: bool) {
@@ -421,7 +423,7 @@ impl ExplorerState {
         });
     }
 
-    fn retarget_path(self, old: &str, new: &str) {
+    pub fn retarget_path(self, old: &str, new: &str) {
         let map = |path: &str| rewrite_prefix(path, old, new);
         let file_name = |path: &str| rel_name(path).to_string();
 

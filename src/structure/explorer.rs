@@ -220,6 +220,7 @@ pub struct ExplorerState {
     pub show_stars: RwSignal<bool>,
     pub show_filter: RwSignal<bool>,
     pub show_export: RwSignal<bool>,
+    pub show_crop: RwSignal<bool>,
     pub show_editor_settings: RwSignal<bool>,
     pub editor_font_size: RwSignal<u32>,
     pub editor_light: RwSignal<bool>,
@@ -255,6 +256,7 @@ impl ExplorerState {
             show_stars: RwSignal::new(false),
             show_filter: RwSignal::new(false),
             show_export: RwSignal::new(false),
+            show_crop: RwSignal::new(false),
             show_editor_settings: RwSignal::new(false),
             editor_font_size: RwSignal::new(15),
             editor_light: RwSignal::new(false),
@@ -268,16 +270,19 @@ impl ExplorerState {
 
     pub fn is_text_mode(self) -> bool {
         self.selected
-            .with(|s| s.as_ref().is_some_and(|item| item.is_text))
+            .try_with(|s| s.as_ref().is_some_and(|item| item.is_text))
+            .unwrap_or(false)
     }
 
     pub fn is_expanded(self, path: &str) -> bool {
-        self.expanded_dirs.with(|set| set.contains(path))
+        self.expanded_dirs
+            .try_with(|set| set.contains(path))
+            .unwrap_or(false)
     }
 
     pub fn toggle_expanded(self, path: &str) {
         let path = path.to_string();
-        self.expanded_dirs.update(|set| {
+        self.expanded_dirs.try_update(|set| {
             if !set.remove(&path) {
                 set.insert(path);
             }

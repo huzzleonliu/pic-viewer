@@ -1,4 +1,5 @@
 pub mod compress;
+pub mod crop;
 pub mod explorer;
 pub mod export;
 pub mod filter;
@@ -9,6 +10,7 @@ pub mod rotate;
 pub mod sniff;
 
 pub use compress::compress_checked_images;
+pub use crop::save_cropped_image;
 pub use export::export_checked;
 pub use filter::{apply_meta_filter, get_meta_index_status, start_meta_index};
 pub use fs::{

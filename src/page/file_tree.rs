@@ -249,7 +249,12 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     let path_expanded = path.clone();
 
     let children = Resource::new(
-        move || (state.is_expanded(&path_expanded), state.refresh.get()),
+        move || {
+            (
+                state.is_expanded(&path_expanded),
+                state.refresh.try_get().unwrap_or(0),
+            )
+        },
         {
             let path = path.clone();
             move |(open, _)| {

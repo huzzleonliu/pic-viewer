@@ -1,13 +1,16 @@
+mod crop_overlay;
 mod export_bar;
 mod filmstrip;
 mod filter_bar;
 mod mark_bar;
 
+use crate::function::crop::{fitted_norm, CropRect};
 use crate::function::{
-    list_images, media_url, parent_path, preview_url, rel_name, save_rotated_image,
-    start_meta_index,
+    list_images, media_url, parent_path, preview_url, rel_name, save_cropped_image,
+    save_rotated_image, start_meta_index,
 };
 use crate::structure::{ExplorerState, SelectedItem};
+use crop_overlay::CropOverlay;
 use export_bar::ExportBar;
 use filmstrip::FilmstripRail;
 use filter_bar::FilterBar;
@@ -40,6 +43,12 @@ pub fn ImageViewer() -> impl IntoView {
     let include_subdirs = RwSignal::new(false);
     let filmstrip_rail = NodeRef::<html::Div>::new();
     let thumb_page = RwSignal::new(0usize);
+    let crop_ratio = RwSignal::new(None::<(u32, u32)>);
+    let crop_norm = RwSignal::new(None::<CropRect>);
+    let img_ref = NodeRef::<html::Img>::new();
+    let stage_ref = NodeRef::<html::Div>::new();
+    let host_ref = NodeRef::<html::Div>::new();
+    let crop_aspect = Signal::derive(move || crop_ratio.get().unwrap_or((1, 1)));
 
     Effect::new(move |_| {
         state.viewed.track();
@@ -48,6 +57,8 @@ pub fn ImageViewer() -> impl IntoView {
         pan.set((0.0, 0.0));
         loaded.set(false);
         failed.set(false);
+        crop_ratio.set(None);
+        crop_norm.set(None);
     });
 
     let gallery_dir = Memo::new(move |_| {
@@ -67,9 +78,9 @@ pub fn ImageViewer() -> impl IntoView {
     let gallery = Resource::new(
         move || {
             (
-                gallery_dir.get(),
-                state.refresh.get(),
-                include_subdirs.get(),
+                gallery_dir.try_get().unwrap_or_default(),
+                state.refresh.try_get().unwrap_or(0),
+                include_subdirs.try_get().unwrap_or(false),
             )
         },
         |(dir, epoch, recursive)| async move { list_images(dir, recursive, epoch).await },
@@ -146,6 +157,74 @@ pub fn ImageViewer() -> impl IntoView {
         });
     };
 
+    Effect::new(move |_| {
+        if !state.show_crop.try_get().unwrap_or(false) {
+            let _ = crop_ratio.try_update(|v| *v = None);
+            let _ = crop_norm.try_update(|v| *v = None);
+        }
+    });
+
+    Effect::new(move |_| {
+        let Some((rw, rh)) = crop_ratio.try_get().flatten() else {
+            let _ = crop_norm.try_update(|v| *v = None);
+            return;
+        };
+        if !loaded.try_get().unwrap_or(false) || failed.try_get().unwrap_or(true) {
+            return;
+        }
+        let apply = move || {
+            if crop_ratio.try_get_untracked().flatten() != Some((rw, rh)) {
+                return;
+            }
+            if let Some(next) = measure_initial_crop(host_ref, rw, rh) {
+                crop_norm.set(Some(next));
+            }
+        };
+        apply();
+        #[cfg(feature = "hydrate")]
+        {
+            use gloo_timers::callback::Timeout;
+            Timeout::new(0, apply).forget();
+        }
+    });
+
+    let begin_crop = move |rw: u32, rh: u32| {
+        zoom.set(1.0);
+        pan.set((0.0, 0.0));
+        rotate.set(0);
+        crop_ratio.set(Some((rw, rh)));
+    };
+
+    let save_crop = move || {
+        let Some(path) = state.viewed.get() else {
+            return;
+        };
+        let Some(r) = crop_norm.get() else {
+            return;
+        };
+        if crop_ratio.get().is_none() || saving.get() {
+            return;
+        }
+        let (x, y, w, h) = (r.x, r.y, r.w, r.h);
+        saving.set(true);
+        leptos::task::spawn_local(async move {
+            match save_cropped_image(path.clone(), x, y, w, h).await {
+                Ok(new_path) => {
+                    if new_path != path {
+                        state.retarget_path(&path, &new_path);
+                    }
+                    crop_ratio.set(None);
+                    crop_norm.set(None);
+                    state.refresh.update(|n| *n += 1);
+                    state.media_rev.update(|n| *n += 1);
+                    state.status.set("已保存裁切".into());
+                }
+                Err(e) => state.status.set(format!("裁切保存失败：{e}")),
+            }
+            saving.set(false);
+        });
+    };
+
     let go_relative = move |delta: isize| {
         let Some(current) = state.viewed.get() else {
             return;
@@ -167,13 +246,18 @@ pub fn ImageViewer() -> impl IntoView {
         }
     };
 
+    let apply_zoom = move |factor: f64| {
+        apply_viewer_zoom(zoom, factor);
+    };
+
     let zoom_by = move |factor: f64| {
-        zoom.update(|z| {
-            *z = (*z * factor).clamp(0.1, 8.0);
-        });
+        apply_zoom(factor);
     };
 
     let reset = move |_| {
+        if crop_ratio.get().is_some() {
+            return;
+        }
         zoom.set(1.0);
         rotate.set(0);
         pan.set((0.0, 0.0));
@@ -181,14 +265,76 @@ pub fn ImageViewer() -> impl IntoView {
 
     view! {
         <section class="viewer" class:panel-off=move || state.is_text_mode()>
+            <div class="viewer-toolbar" class:panel-off=move || !state.show_crop.get()>
+                <button
+                    class="btn"
+                    class:is-active=move || crop_ratio.get() == Some((3, 4))
+                    disabled=move || state.viewed.get().is_none()
+                    title="竖图 3:4"
+                    on:click=move |_| begin_crop(3, 4)
+                >
+                    "3:4"
+                </button>
+                <button
+                    class="btn"
+                    class:is-active=move || crop_ratio.get() == Some((1, 1))
+                    disabled=move || state.viewed.get().is_none()
+                    title="正方形 1:1"
+                    on:click=move |_| begin_crop(1, 1)
+                >
+                    "1:1"
+                </button>
+                <button
+                    class="btn"
+                    class:is-active=move || crop_ratio.get() == Some((4, 3))
+                    disabled=move || state.viewed.get().is_none()
+                    title="横图 4:3"
+                    on:click=move |_| begin_crop(4, 3)
+                >
+                    "4:3"
+                </button>
+                <button
+                    class="btn"
+                    title="取消裁切框"
+                    disabled=move || crop_ratio.get().is_none()
+                    on:click=move |_| {
+                        crop_ratio.set(None);
+                        crop_norm.set(None);
+                    }
+                >
+                    "重置"
+                </button>
+                <button
+                    class="btn"
+                    title="裁切后保存为 WebP；原文件已是 WebP 则覆盖"
+                    disabled=move || {
+                        state.viewed.get().is_none()
+                            || crop_norm.get().is_none()
+                            || saving.get()
+                    }
+                    on:click=move |_| save_crop()
+                >
+                    "保存"
+                </button>
+            </div>
             <div class="viewer-toolbar" class:panel-off=move || !state.show_adjust.get()>
                 <button class="btn" on:click=move |_| zoom_by(1.0 / 1.2) title="缩小">"−"</button>
                 <span class="zoom-label">{move || format!("{}%", (zoom.get() * 100.0).round())}</span>
                 <button class="btn" on:click=move |_| zoom_by(1.2) title="放大">"+"</button>
-                <button class="btn" on:click=move |_| rotate.update(|r| *r = (*r - 90).rem_euclid(360)) title="左转">
+                <button
+                    class="btn"
+                    disabled=move || crop_ratio.get().is_some()
+                    on:click=move |_| rotate.update(|r| *r = (*r - 90).rem_euclid(360))
+                    title="左转"
+                >
                     "↺"
                 </button>
-                <button class="btn" on:click=move |_| rotate.update(|r| *r = (*r + 90) % 360) title="右转">
+                <button
+                    class="btn"
+                    disabled=move || crop_ratio.get().is_some()
+                    on:click=move |_| rotate.update(|r| *r = (*r + 90) % 360)
+                    title="右转"
+                >
                     "↻"
                 </button>
                 <button class="btn" on:click=reset title="重置缩放与旋转">"重置"</button>
@@ -243,19 +389,19 @@ pub fn ImageViewer() -> impl IntoView {
             </div>
             <div
                 class="stage"
+                node_ref=stage_ref
                 class:is-dragging=move || dragging.get()
                 class:is-picked=move || {
                     state.viewed.get().is_some_and(|p| state.is_checked(&p))
                 }
+                class:is-cropping=move || crop_ratio.get().is_some()
                 on:wheel=move |ev: ev::WheelEvent| {
                     ev.prevent_default();
                     let factor = if ev.delta_y() < 0.0 { 1.12 } else { 1.0 / 1.12 };
-                    zoom.update(|z| {
-                        *z = (*z * factor).clamp(0.1, 8.0);
-                    });
+                    apply_zoom(factor);
                 }
                 on:mousedown=move |ev: ev::MouseEvent| {
-                    if ev.button() != 0 {
+                    if crop_ratio.get().is_some() || ev.button() != 0 {
                         return;
                     }
                     dragging.set(true);
@@ -316,30 +462,41 @@ pub fn ImageViewer() -> impl IntoView {
                                 <Show when=move || failed.get()>
                                     <div class="stage-msg error">"无法加载图片"</div>
                                 </Show>
-                                <img
-                                    src=src
-                                    alt=path.clone()
-                                    draggable="false"
-                                    class=move || {
-                                        if loaded.get() { "viewer-img is-ready" } else { "viewer-img" }
-                                    }
-                                    style=move || {
-                                        let (x, y) = pan.get();
-                                        format!(
-                                            "transform: translate({x}px, {y}px) scale({}) rotate({}deg)",
-                                            zoom.get(),
-                                            rotate.get(),
-                                        )
-                                    }
-                                    on:load=move |_| {
-                                        loaded.set(true);
-                                        failed.set(false);
-                                    }
-                                    on:error=move |_| {
-                                        failed.set(true);
-                                        loaded.set(false);
-                                    }
-                                />
+                                <div class="crop-anchor" node_ref=host_ref>
+                                    <div
+                                        class="crop-host"
+                                        style=move || {
+                                            let (x, y) = pan.get();
+                                            format!(
+                                                "transform: translate({x}px, {y}px) scale({}) rotate({}deg)",
+                                                zoom.get(),
+                                                rotate.get(),
+                                            )
+                                        }
+                                    >
+                                        <img
+                                            node_ref=img_ref
+                                            src=src
+                                            alt=path.clone()
+                                            draggable="false"
+                                            class=move || {
+                                                if loaded.get() {
+                                                    "viewer-img is-ready"
+                                                } else {
+                                                    "viewer-img"
+                                                }
+                                            }
+                                            on:load=move |_| {
+                                                loaded.set(true);
+                                                failed.set(false);
+                                            }
+                                            on:error=move |_| {
+                                                failed.set(true);
+                                                loaded.set(false);
+                                            }
+                                        />
+                                    </div>
+                                </div>
                             </div>
                             <button
                                 type="button"
@@ -363,6 +520,16 @@ pub fn ImageViewer() -> impl IntoView {
                                     go_relative(1);
                                 }
                             ></button>
+                            <Show when=move || crop_ratio.get().is_some()>
+                                <CropOverlay
+                                    stage_ref=stage_ref
+                                    host_ref=host_ref
+                                    norm=crop_norm
+                                    ratio=crop_aspect
+                                    zoom=zoom
+                                    pan=pan
+                                />
+                            </Show>
                         }
                             .into_any()
                     }
@@ -409,4 +576,44 @@ pub fn ImageViewer() -> impl IntoView {
             </Suspense>
         </section>
     }.into_any()
+}
+
+pub(crate) fn apply_viewer_zoom(zoom: RwSignal<f64>, factor: f64) {
+    let Some(old) = zoom.try_get() else {
+        return;
+    };
+    let new_z = (old * factor).clamp(0.1, 8.0);
+    if old <= 0.0 || (new_z - old).abs() < 1e-12 {
+        return;
+    }
+    zoom.set(new_z);
+}
+
+fn measure_initial_crop(
+    host_ref: NodeRef<html::Div>,
+    ratio_w: u32,
+    ratio_h: u32,
+) -> Option<CropRect> {
+    let (w, h) = host_layout_size(host_ref)?;
+    Some(fitted_norm(w, h, ratio_w as f64, ratio_h as f64))
+}
+
+fn host_layout_size(host_ref: NodeRef<html::Div>) -> Option<(f64, f64)> {
+    #[cfg(feature = "hydrate")]
+    {
+        let host = host_ref.get()?;
+        let hr = host.get_bounding_client_rect();
+        let w = hr.width();
+        let h = hr.height();
+        if w < 1.0 || h < 1.0 {
+            None
+        } else {
+            Some((w, h))
+        }
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = host_ref;
+        None
+    }
 }
