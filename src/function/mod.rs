@@ -4,6 +4,8 @@ pub mod explorer;
 pub mod export;
 pub mod filter;
 pub mod fs;
+pub mod lru;
+pub mod nav;
 pub mod path;
 pub mod rating;
 pub mod rotate;
@@ -17,9 +19,11 @@ pub use fs::{
     create_dir, create_file, delete_entry, get_root_info, list_dir, list_images, paste_entry,
     read_text_file, rename_entries_numbered, rename_entry, write_text_file,
 };
+pub use nav::Nav;
 pub use path::{
-    is_image_name, join_rel, media_url, number_run, numbered_file_name, parent_path, preview_url,
-    rel_name, rewrite_prefix, thumb_url, validate_file_name, validate_rename_prefix,
+    is_image_name, is_text_name, join_rel, kinds_from_name, media_url, number_run,
+    numbered_file_name, parent_path, preview_url, rel_name, rewrite_prefix, thumb_url,
+    validate_file_name, validate_rename_prefix, with_file_rev,
 };
 pub use rating::{
     batch_mark_images, get_image_rating, get_image_tags, set_image_rating, set_image_tags,

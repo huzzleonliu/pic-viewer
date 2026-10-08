@@ -16,24 +16,24 @@ pub(crate) fn FilterBar(dir: Memo<String>) -> impl IntoView {
     let poll_gen = RwSignal::new(0u64);
 
     Effect::new(move |_| {
-        if !state.show_filter.get() {
+        if state.is_text_mode() || !state.panels.filter.try_get().unwrap_or(false) {
             return;
         }
-        let dir = dir.get();
-        ready.set(false);
-        progress.set((0, 0));
-        poll_gen.update(|n| *n += 1);
-        let my = poll_gen.get_untracked();
+        let dir = dir.try_get().unwrap_or_default();
+        let _ = ready.try_update(|v| *v = false);
+        let _ = progress.try_update(|v| *v = (0, 0));
+        let _ = poll_gen.try_update(|n| *n += 1);
+        let my = poll_gen.try_get_untracked().unwrap_or(0);
         leptos::task::spawn_local(async move {
             loop {
-                if poll_gen.get_untracked() != my {
+                if poll_gen.try_get_untracked() != Some(my) {
                     return;
                 }
                 match get_meta_index_status(dir.clone()).await {
                     Ok(s) => {
-                        progress.set((s.done, s.total));
+                        let _ = progress.try_update(|v| *v = (s.done, s.total));
                         if s.ready {
-                            ready.set(true);
+                            let _ = ready.try_update(|v| *v = true);
                             return;
                         }
                     }
@@ -50,7 +50,7 @@ pub(crate) fn FilterBar(dir: Memo<String>) -> impl IntoView {
     });
 
     view! {
-        <div class="filter-bar" class:panel-off=move || !state.show_filter.get()>
+        <div class="filter-bar" class:panel-off=move || !state.panels.filter.get()>
             <span class="mark-label">"星标"</span>
             <select
                 class="filter-select"
@@ -143,12 +143,19 @@ pub(crate) fn FilterBar(dir: Memo<String>) -> impl IntoView {
                             {
                                 Ok(paths) => {
                                     let n = paths.len();
-                                    state.filter_paths.set(Some(paths.into_iter().collect()));
-                                    state.status.set(format!("已筛选 {n} 张"));
+                                    let _ = state.filter_paths.try_update(|v| {
+                                        *v = Some(paths.into_iter().collect())
+                                    });
+                                    let _ =
+                                        state.status.try_update(|s| *s = format!("已筛选 {n} 张"));
                                 }
-                                Err(e) => state.status.set(format!("筛选失败：{e}")),
+                                Err(e) => {
+                                    let _ = state
+                                        .status
+                                        .try_update(|s| *s = format!("筛选失败：{e}"));
+                                }
                             }
-                            applying.set(false);
+                            let _ = applying.try_update(|v| *v = false);
                         });
                     }
                 >

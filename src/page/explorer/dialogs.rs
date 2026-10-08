@@ -266,8 +266,8 @@ pub(crate) fn FailureDialog() -> impl IntoView {
     let copied = RwSignal::new(false);
 
     Effect::new(move |_| {
-        state.failure_report.track();
-        copied.set(false);
+        let _ = state.failure_report.try_get();
+        let _ = copied.try_update(|v| *v = false);
     });
 
     view! {

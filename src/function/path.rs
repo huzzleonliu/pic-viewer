@@ -6,6 +6,22 @@ pub fn is_image_name(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub fn is_text_name(name: &str) -> bool {
+    name.rsplit_once('.')
+        .and_then(|(_, ext)| crate::function::sniff::kind_from_ext(ext))
+        .is_some_and(|k| k == crate::function::sniff::FileKind::Text)
+}
+
+pub fn kinds_from_name(name: &str) -> (bool, bool) {
+    if is_image_name(name) {
+        (true, false)
+    } else if is_text_name(name) {
+        (false, true)
+    } else {
+        (false, false)
+    }
+}
+
 pub fn rel_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -105,11 +121,15 @@ pub fn preview_url(rel: &str) -> String {
     format!("/preview/{}", encode_rel(rel))
 }
 
+pub fn with_file_rev(url: String, mtime: u64, rev: u64) -> String {
+    format!("{url}?v={mtime}.{rev}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        join_rel, number_run, numbered_file_name, parent_path, rel_name, rewrite_prefix,
-        validate_file_name, validate_rename_prefix,
+        join_rel, kinds_from_name, number_run, numbered_file_name, parent_path, rel_name,
+        rewrite_prefix, validate_file_name, validate_rename_prefix, with_file_rev,
     };
 
     #[test]
@@ -170,5 +190,25 @@ mod tests {
     fn rename_prefix_allows_empty() {
         assert_eq!(validate_rename_prefix("  ").unwrap(), "");
         assert!(validate_rename_prefix("a/b").is_err());
+    }
+
+    #[test]
+    fn kinds_from_name_detects_text_and_image() {
+        assert_eq!(kinds_from_name("a.jpg"), (true, false));
+        assert_eq!(kinds_from_name("notes.txt"), (false, true));
+        assert_eq!(kinds_from_name("data.bin"), (false, false));
+        assert_eq!(kinds_from_name("新建文件.txt"), (false, true));
+    }
+
+    #[test]
+    fn file_rev_query_uses_mtime_and_session_rev() {
+        assert_eq!(
+            with_file_rev("/preview/a.jpg".into(), 1_710_000_000, 0),
+            "/preview/a.jpg?v=1710000000.0"
+        );
+        assert_eq!(
+            with_file_rev("/thumb/a.jpg".into(), 1_710_000_001, 2),
+            "/thumb/a.jpg?v=1710000001.2"
+        );
     }
 }

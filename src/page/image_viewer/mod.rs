@@ -4,13 +4,15 @@ mod filmstrip;
 mod filter_bar;
 mod mark_bar;
 
+#[cfg(feature = "hydrate")]
+use crate::function::crop::contain_content_rect;
 use crate::function::crop::{fitted_norm, CropRect};
-use crate::function::explorer::{gallery_dir_from, next_viewed_for_dir};
+use crate::function::explorer::gallery_dir_from;
 use crate::function::{
     list_images, media_url, preview_url, rel_name, save_cropped_image, save_rotated_image,
-    start_meta_index,
+    start_meta_index, with_file_rev, Nav,
 };
-use crate::structure::{ExplorerState, SelectedItem};
+use crate::structure::{ExplorerState, ImageList, ImageRef, SelectedItem};
 use crop_overlay::CropOverlay;
 use export_bar::ExportBar;
 use filmstrip::FilmstripRail;
@@ -23,10 +25,13 @@ use std::collections::HashSet;
 
 pub(crate) const FILMSTRIP_PAGE: usize = 100;
 
-fn apply_path_filter(paths: Vec<String>, filter: Option<HashSet<String>>) -> Vec<String> {
+fn apply_path_filter(items: Vec<ImageRef>, filter: Option<HashSet<String>>) -> Vec<ImageRef> {
     match filter {
-        Some(set) => paths.into_iter().filter(|p| set.contains(p)).collect(),
-        None => paths,
+        Some(set) => items
+            .into_iter()
+            .filter(|item| set.contains(&item.path))
+            .collect(),
+        None => items,
     }
 }
 
@@ -41,7 +46,6 @@ pub fn ImageViewer() -> impl IntoView {
     let loaded = RwSignal::new(false);
     let failed = RwSignal::new(false);
     let view_original = RwSignal::new(false);
-    let include_subdirs = RwSignal::new(false);
     let filmstrip_rail = NodeRef::<html::Div>::new();
     let thumb_page = RwSignal::new(0usize);
     let crop_ratio = RwSignal::new(None::<(u32, u32)>);
@@ -50,21 +54,47 @@ pub fn ImageViewer() -> impl IntoView {
     let stage_ref = NodeRef::<html::Div>::new();
     let host_ref = NodeRef::<html::Div>::new();
     let crop_aspect = Signal::derive(move || crop_ratio.get().unwrap_or((1, 1)));
+    let paused = move || state.is_text_mode();
 
     Effect::new(move |_| {
-        state.viewed.track();
-        zoom.set(1.0);
-        rotate.set(0);
-        pan.set((0.0, 0.0));
-        loaded.set(false);
-        failed.set(false);
-        crop_ratio.set(None);
-        crop_norm.set(None);
+        let _ = state.viewed.try_get();
+        if state
+            .selected
+            .try_with_untracked(|s| s.as_ref().is_some_and(|item| item.is_text))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        if zoom.try_get_untracked() != Some(1.0) {
+            let _ = zoom.try_update(|v| *v = 1.0);
+        }
+        if rotate.try_get_untracked() != Some(0) {
+            let _ = rotate.try_update(|v| *v = 0);
+        }
+        if pan.try_get_untracked() != Some((0.0, 0.0)) {
+            let _ = pan.try_update(|v| *v = (0.0, 0.0));
+        }
+        if loaded.try_get_untracked() != Some(false) {
+            let _ = loaded.try_update(|v| *v = false);
+        }
+        if failed.try_get_untracked() != Some(false) {
+            let _ = failed.try_update(|v| *v = false);
+        }
+        if crop_ratio.try_get_untracked().flatten().is_some() {
+            let _ = crop_ratio.try_update(|v| *v = None);
+        }
+        if crop_norm.try_get_untracked().flatten().is_some() {
+            let _ = crop_norm.try_update(|v| *v = None);
+        }
     });
 
     let gallery_dir = Memo::new(move |_| {
+        let browse = state.browse_dir.get();
+        if let Some(dir) = browse.as_deref() {
+            return dir.to_string();
+        }
         gallery_dir_from(
-            state.browse_dir.get().as_deref(),
+            None,
             state.selected.get().as_ref(),
             state.viewed.get().as_deref(),
         )
@@ -72,72 +102,113 @@ pub fn ImageViewer() -> impl IntoView {
 
     let gallery = Resource::new(
         move || {
+            if paused() {
+                return (false, String::new(), 0u64, false);
+            }
             (
+                true,
                 gallery_dir.try_get().unwrap_or_default(),
-                state.refresh.try_get().unwrap_or(0),
-                include_subdirs.try_get().unwrap_or(false),
+                state.gallery_epoch.try_get().unwrap_or(0),
+                state.include_subdirs.try_get().unwrap_or(false),
             )
         },
-        |(dir, epoch, recursive)| async move { list_images(dir, recursive, epoch).await },
+        |(active, dir, epoch, recursive)| async move {
+            if !active {
+                return Ok(ImageList {
+                    truncated: false,
+                    items: Vec::new(),
+                });
+            }
+            list_images(dir, recursive, epoch).await
+        },
     );
 
     Effect::new(move |_| {
-        let dir = gallery_dir.get();
-        let epoch = state.refresh.get();
-        let recursive = include_subdirs.get();
-        state.filter_paths.set(None);
+        if paused() || !state.panels.filter.try_get().unwrap_or(false) {
+            return;
+        }
+        let dir = gallery_dir.try_get().unwrap_or_default();
+        let epoch = state.gallery_epoch.try_get().unwrap_or(0);
+        let recursive = state.include_subdirs.try_get().unwrap_or(false);
         leptos::task::spawn_local(async move {
             if let Err(e) = start_meta_index(dir, epoch, recursive).await {
-                state.status.set(format!("读取元数据失败：{e}"));
+                let _ = state
+                    .status
+                    .try_update(|s| *s = format!("读取元数据失败：{e}"));
             }
         });
     });
 
     Effect::new(move |_| {
-        gallery_dir.track();
-        state.filter_paths.track();
-        state.refresh.track();
-        include_subdirs.track();
-        thumb_page.set(0);
-    });
-
-    Effect::new(move |_| {
-        if state.browse_dir.try_get().flatten().is_none() {
+        if paused() {
             return;
         }
-        let Some(Ok(list)) = gallery.get() else {
-            return;
-        };
-        let shown = apply_path_filter(list.paths, state.filter_paths.get());
-        let current = state.viewed.try_get().flatten();
-        let next = next_viewed_for_dir(&shown, current.as_deref());
-        if current.as_deref() != next.as_deref() {
-            state.viewed.set(next);
+        let _ = gallery_dir.try_get();
+        let _ = state.gallery_epoch.try_get();
+        let _ = state.include_subdirs.try_get();
+        if state.filter_paths.try_get_untracked().flatten().is_some() {
+            let _ = state.filter_paths.try_update(|v| *v = None);
         }
     });
 
     Effect::new(move |_| {
-        let Some(current) = state.viewed.get() else {
+        if paused() {
+            return;
+        }
+        let _ = gallery_dir.try_get();
+        let _ = state.filter_paths.try_get();
+        let _ = state.gallery_epoch.try_get();
+        let _ = state.include_subdirs.try_get();
+        if thumb_page.try_get_untracked() != Some(0) {
+            let _ = thumb_page.try_update(|v| *v = 0);
+        }
+    });
+
+    Effect::new(move |_| {
+        if paused() {
+            return;
+        }
+        let Some(dir) = state.browse_dir.try_get().flatten() else {
             return;
         };
-        let Some(Ok(list)) = gallery.get() else {
+        let Some(Ok(list)) = gallery.try_get().flatten() else {
+            return;
+        };
+        let shown = apply_path_filter(list.items, state.filter_paths.try_get().flatten());
+        state.navigate(Nav::ApplyGallery {
+            dir,
+            shown: shown.into_iter().map(|item| item.path).collect(),
+        });
+    });
+
+    Effect::new(move |_| {
+        if paused() {
+            return;
+        }
+        let Some(current) = state.viewed.try_get().flatten() else {
+            return;
+        };
+        let Some(Ok(list)) = gallery.try_get().flatten() else {
             return;
         };
         if list.truncated {
-            state.status.set("图片列表已截断到 10000 张".into());
+            const MSG: &str = "图片列表已截断到 10000 张";
+            if state.status.try_get_untracked().as_deref() != Some(MSG) {
+                let _ = state.status.try_update(|s| *s = MSG.into());
+            }
         }
-        let shown = apply_path_filter(list.paths, state.filter_paths.get());
-        let Some(idx) = shown.iter().position(|p| p == &current) else {
+        let shown = apply_path_filter(list.items, state.filter_paths.try_get().flatten());
+        let Some(idx) = shown.iter().position(|item| item.path == current) else {
             return;
         };
         let page = idx / FILMSTRIP_PAGE;
-        if thumb_page.get_untracked() != page {
-            thumb_page.set(page);
+        if thumb_page.try_get_untracked() != Some(page) {
+            let _ = thumb_page.try_update(|v| *v = page);
         }
     });
 
     Effect::new(move |_| {
-        thumb_page.track();
+        let _ = thumb_page.try_get();
         if let Some(el) = filmstrip_rail.get() {
             el.set_scroll_left(0);
         }
@@ -157,26 +228,34 @@ pub fn ImageViewer() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match save_rotated_image(path, degrees).await {
                 Ok(()) => {
-                    rotate.set(0);
-                    state.media_rev.update(|n| *n += 1);
-                    state.status.set("已保存旋转".into());
+                    let _ = rotate.try_update(|v| *v = 0);
+                    let _ = state.media_rev.try_update(|n| *n += 1);
+                    let _ = state.status.try_update(|s| *s = "已保存旋转".into());
                 }
-                Err(e) => state.status.set(format!("保存失败：{e}")),
+                Err(e) => {
+                    let _ = state.status.try_update(|s| *s = format!("保存失败：{e}"));
+                }
             }
-            saving.set(false);
+            let _ = saving.try_update(|v| *v = false);
         });
     };
 
     Effect::new(move |_| {
-        if !state.show_crop.try_get().unwrap_or(false) {
-            let _ = crop_ratio.try_update(|v| *v = None);
-            let _ = crop_norm.try_update(|v| *v = None);
+        if !state.panels.crop.try_get().unwrap_or(false) {
+            if crop_ratio.try_get_untracked().flatten().is_some() {
+                let _ = crop_ratio.try_update(|v| *v = None);
+            }
+            if crop_norm.try_get_untracked().flatten().is_some() {
+                let _ = crop_norm.try_update(|v| *v = None);
+            }
         }
     });
 
     Effect::new(move |_| {
         let Some((rw, rh)) = crop_ratio.try_get().flatten() else {
-            let _ = crop_norm.try_update(|v| *v = None);
+            if crop_norm.try_get_untracked().flatten().is_some() {
+                let _ = crop_norm.try_update(|v| *v = None);
+            }
             return;
         };
         if !loaded.try_get().unwrap_or(false) || failed.try_get().unwrap_or(true) {
@@ -186,8 +265,8 @@ pub fn ImageViewer() -> impl IntoView {
             if crop_ratio.try_get_untracked().flatten() != Some((rw, rh)) {
                 return;
             }
-            if let Some(next) = measure_initial_crop(host_ref, rw, rh) {
-                crop_norm.set(Some(next));
+            if let Some(next) = measure_initial_crop(host_ref, img_ref, rw, rh) {
+                let _ = crop_norm.try_update(|v| *v = Some(next));
             }
         };
         apply();
@@ -223,15 +302,19 @@ pub fn ImageViewer() -> impl IntoView {
                     if new_path != path {
                         state.retarget_path(&path, &new_path);
                     }
-                    crop_ratio.set(None);
-                    crop_norm.set(None);
-                    state.refresh.update(|n| *n += 1);
-                    state.media_rev.update(|n| *n += 1);
-                    state.status.set("已保存裁切".into());
+                    let _ = crop_ratio.try_update(|v| *v = None);
+                    let _ = crop_norm.try_update(|v| *v = None);
+                    state.bump_listings();
+                    let _ = state.media_rev.try_update(|n| *n += 1);
+                    let _ = state.status.try_update(|s| *s = "已保存裁切".into());
                 }
-                Err(e) => state.status.set(format!("裁切保存失败：{e}")),
+                Err(e) => {
+                    let _ = state
+                        .status
+                        .try_update(|s| *s = format!("裁切保存失败：{e}"));
+                }
             }
-            saving.set(false);
+            let _ = saving.try_update(|v| *v = false);
         });
     };
 
@@ -242,17 +325,13 @@ pub fn ImageViewer() -> impl IntoView {
         let Some(Ok(list)) = gallery.get() else {
             return;
         };
-        let shown = apply_path_filter(list.paths, state.filter_paths.get());
-        let Some(idx) = shown.iter().position(|p| p == &current) else {
+        let shown = apply_path_filter(list.items, state.filter_paths.get());
+        let Some(idx) = shown.iter().position(|item| item.path == current) else {
             return;
         };
         let next = idx as isize + delta;
         if next >= 0 && (next as usize) < shown.len() {
-            let path = shown[next as usize].clone();
-            state.viewed.set(Some(path.clone()));
-            state
-                .selected
-                .set(Some(SelectedItem::from_image_path(path)));
+            state.navigate(Nav::OpenImage(shown[next as usize].path.clone()));
         }
     };
 
@@ -275,7 +354,7 @@ pub fn ImageViewer() -> impl IntoView {
 
     view! {
         <section class="viewer" class:panel-off=move || state.is_text_mode()>
-            <div class="viewer-toolbar" class:panel-off=move || !state.show_crop.get()>
+            <div class="viewer-toolbar" class:panel-off=move || !state.panels.crop.get()>
                 <button
                     class="btn"
                     class:is-active=move || crop_ratio.get() == Some((3, 4))
@@ -327,7 +406,7 @@ pub fn ImageViewer() -> impl IntoView {
                     "保存"
                 </button>
             </div>
-            <div class="viewer-toolbar" class:panel-off=move || !state.show_adjust.get()>
+            <div class="viewer-toolbar" class:panel-off=move || !state.panels.adjust.get()>
                 <button class="btn" on:click=move |_| zoom_by(1.0 / 1.2) title="缩小">"−"</button>
                 <span class="zoom-label">{move || format!("{}%", (zoom.get() * 100.0).round())}</span>
                 <button class="btn" on:click=move |_| zoom_by(1.2) title="放大">"+"</button>
@@ -389,9 +468,11 @@ pub fn ImageViewer() -> impl IntoView {
                 >
                     <input
                         type="checkbox"
-                        prop:checked=move || include_subdirs.get()
+                        prop:checked=move || state.include_subdirs.get()
                         on:change=move |ev| {
-                            include_subdirs.set(event_target_checked(&ev));
+                            let _ = state
+                                .include_subdirs
+                                .try_update(|v| *v = event_target_checked(&ev));
                         }
                     />
                     "包括子目录"
@@ -442,7 +523,17 @@ pub fn ImageViewer() -> impl IntoView {
                                 } else {
                                     preview_url(&path)
                                 };
-                                format!("{}?v={}", url, state.media_rev.get())
+                                let mtime = gallery
+                                    .get()
+                                    .and_then(|res| res.ok())
+                                    .and_then(|list| {
+                                        list.items
+                                            .iter()
+                                            .find(|item| item.path == path)
+                                            .map(|item| item.mtime)
+                                    })
+                                    .unwrap_or(0);
+                                with_file_rev(url, mtime, state.media_rev.get())
                             }
                         };
                         let checked_path = path.clone();
@@ -472,9 +563,10 @@ pub fn ImageViewer() -> impl IntoView {
                                 <Show when=move || failed.get()>
                                     <div class="stage-msg error">"无法加载图片"</div>
                                 </Show>
-                                <div class="crop-anchor" node_ref=host_ref>
+                                <div class="crop-anchor">
                                     <div
                                         class="crop-host"
+                                        node_ref=host_ref
                                         style=move || {
                                             let (x, y) = pan.get();
                                             format!(
@@ -534,6 +626,7 @@ pub fn ImageViewer() -> impl IntoView {
                                 <CropOverlay
                                     stage_ref=stage_ref
                                     host_ref=host_ref
+                                    img_ref=img_ref
                                     norm=crop_norm
                                     ratio=crop_aspect
                                     zoom=zoom
@@ -560,17 +653,17 @@ pub fn ImageViewer() -> impl IntoView {
             <Suspense fallback=|| ()>
                 {move || {
                     gallery.get().and_then(|res| match res {
-                        Ok(list) if list.paths.is_empty() => None,
+                        Ok(list) if list.items.is_empty() => None,
                         Ok(list) => {
-                            let shown = apply_path_filter(list.paths, state.filter_paths.get());
+                            let shown = apply_path_filter(list.items, state.filter_paths.get());
                             if shown.is_empty() {
                                 None
                             } else {
                                 Some(
                                     view! {
-                                        <Show when=move || state.show_thumbnails.get()>
+                                        <Show when=move || state.panels.thumbnails.get()>
                                             <FilmstripRail
-                                                paths=shown.clone()
+                                                items=shown.clone()
                                                 thumb_page=thumb_page
                                                 rail_ref=filmstrip_rail
                                             />
@@ -601,29 +694,45 @@ pub(crate) fn apply_viewer_zoom(zoom: RwSignal<f64>, factor: f64) {
 
 fn measure_initial_crop(
     host_ref: NodeRef<html::Div>,
+    img_ref: NodeRef<html::Img>,
     ratio_w: u32,
     ratio_h: u32,
 ) -> Option<CropRect> {
-    let (w, h) = host_layout_size(host_ref)?;
+    let (w, h) = host_layout_size(host_ref, img_ref)?;
     Some(fitted_norm(w, h, ratio_w as f64, ratio_h as f64))
 }
 
-fn host_layout_size(host_ref: NodeRef<html::Div>) -> Option<(f64, f64)> {
+fn host_layout_size(
+    host_ref: NodeRef<html::Div>,
+    img_ref: NodeRef<html::Img>,
+) -> Option<(f64, f64)> {
     #[cfg(feature = "hydrate")]
     {
         let host = host_ref.get()?;
-        let hr = host.get_bounding_client_rect();
-        let w = hr.width();
-        let h = hr.height();
+        let w = f64::from(host.offset_width());
+        let h = f64::from(host.offset_height());
         if w < 1.0 || h < 1.0 {
-            None
+            return None;
+        }
+        let (nw, nh) = img_ref
+            .get()
+            .map(|img| {
+                (
+                    f64::from(img.natural_width()),
+                    f64::from(img.natural_height()),
+                )
+            })
+            .unwrap_or((0.0, 0.0));
+        let r = contain_content_rect(w, h, nw, nh);
+        if r.w >= 1.0 && r.h >= 1.0 {
+            Some((r.w, r.h))
         } else {
             Some((w, h))
         }
     }
     #[cfg(not(feature = "hydrate"))]
     {
-        let _ = host_ref;
+        let _ = (host_ref, img_ref);
         None
     }
 }

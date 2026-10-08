@@ -39,6 +39,7 @@ body {
   text-align: center;
 }
 
+/* —— layout —— */
 .explorer {
   height: 100%;
   width: 100%;
@@ -181,6 +182,7 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
+/* —— tree —— */
 .tree-scroll {
   overflow: auto;
   flex: 1;
@@ -305,6 +307,7 @@ body {
   color: var(--danger);
 }
 
+/* —— viewer —— */
 .viewer {
   flex: 1;
   min-width: 0;
@@ -453,6 +456,7 @@ body {
   scrollbar-gutter: stable;
 }
 
+/* —— mark / filter —— */
 .mark-bar {
   flex: 0 0 auto;
   min-width: 0;
@@ -772,9 +776,11 @@ body {
   transition: none;
 }
 
+/* —— crop —— */
 .crop-anchor {
-  display: inline-block;
+  display: block;
   line-height: 0;
+  font-size: 0;
   max-width: 100%;
   max-height: 100%;
 }
@@ -930,6 +936,7 @@ body {
   color: var(--muted);
 }
 
+/* —— modal —— */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1034,6 +1041,7 @@ body {
   font-size: 0.78rem;
 }
 
+/* —— export —— */
 .export-bar {
   flex: 0 0 auto;
   min-width: 0;
@@ -1056,6 +1064,7 @@ body {
   margin-left: auto;
 }
 
+/* —— editor —— */
 .text-editor {
   background: var(--bg);
 }

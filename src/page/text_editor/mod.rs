@@ -363,20 +363,20 @@ pub fn TextEditor() -> impl IntoView {
         },
     );
 
-    Effect::new(move |_| match source.get() {
-        Some(Ok(text)) => {
-            load_error.set(None);
-            saved.set(text.clone());
-            draft.set(text);
-            cursors.set(Vec::new());
+    Effect::new(move |_| match source.try_get() {
+        Some(Some(Ok(text))) => {
+            let _ = load_error.try_update(|v| *v = None);
+            let _ = saved.try_update(|v| *v = text.clone());
+            let _ = draft.try_update(|v| *v = text);
+            let _ = cursors.try_update(|v| *v = Vec::new());
         }
-        Some(Err(err)) => {
-            load_error.set(Some(err.to_string()));
-            saved.set(String::new());
-            draft.set(String::new());
-            cursors.set(Vec::new());
+        Some(Some(Err(err))) => {
+            let _ = load_error.try_update(|v| *v = Some(err.to_string()));
+            let _ = saved.try_update(|v| *v = String::new());
+            let _ = draft.try_update(|v| *v = String::new());
+            let _ = cursors.try_update(|v| *v = Vec::new());
         }
-        None => {}
+        _ => {}
     });
 
     let dirty = move || draft.get() != saved.get();
@@ -408,23 +408,25 @@ pub fn TextEditor() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match write_text_file(path, content.clone()).await {
                 Ok(()) => {
-                    saved.set(content);
-                    state.status.set(format!("已保存：{name}"));
+                    let _ = saved.try_update(|v| *v = content);
+                    let _ = state.status.try_update(|s| *s = format!("已保存：{name}"));
                 }
-                Err(err) => state.status.set(format!("保存失败：{err}")),
+                Err(err) => {
+                    let _ = state.status.try_update(|s| *s = format!("保存失败：{err}"));
+                }
             }
-            saving.set(false);
+            let _ = saving.try_update(|v| *v = false);
         });
     };
 
     let bump_font = move |delta: i32| {
-        state.editor_font_size.update(|size| {
+        state.editor.font_size.update(|size| {
             let next = i32::try_from(*size).unwrap_or(15) + delta;
             *size = next.clamp(FONT_MIN as i32, FONT_MAX as i32) as u32;
         });
     };
 
-    let font_style = move || format!("font-size:{}px", state.editor_font_size.get());
+    let font_style = move || format!("font-size:{}px", state.editor.font_size.get());
 
     let refresh_overlay = move || {
         let Some(el) = textarea_ref.get() else {
@@ -449,10 +451,10 @@ pub fn TextEditor() -> impl IntoView {
 
     Effect::new(move |_| {
         let _ = (
-            cursors.get(),
-            draft.get(),
-            state.editor_font_size.get(),
-            state.editor_word_wrap.get(),
+            cursors.try_get(),
+            draft.try_get(),
+            state.editor.font_size.try_get(),
+            state.editor.word_wrap.try_get(),
         );
         refresh_overlay();
     });
@@ -467,9 +469,9 @@ pub fn TextEditor() -> impl IntoView {
     view! {
         <section
             class="viewer text-editor"
-            class:is-light=move || state.editor_light.get()
+            class:is-light=move || state.editor.light.get()
         >
-            <div class="viewer-toolbar" class:panel-off=move || !state.show_adjust.get()>
+            <div class="viewer-toolbar" class:panel-off=move || !state.panels.adjust.get()>
                 <button
                     class="btn"
                     title="丢弃未保存的修改"
@@ -490,40 +492,40 @@ pub fn TextEditor() -> impl IntoView {
             </div>
             <div
                 class="viewer-toolbar editor-settings-bar"
-                class:panel-off=move || !state.show_editor_settings.get()
+                class:panel-off=move || !state.panels.editor_settings.get()
             >
                 <span class="mark-label">"字号"</span>
                 <button
                     class="btn"
                     title="减小字号"
-                    disabled=move || { state.editor_font_size.get() <= FONT_MIN }
+                    disabled=move || { state.editor.font_size.get() <= FONT_MIN }
                     on:click=move |_| bump_font(-1)
                 >
                     "−"
                 </button>
-                <span class="zoom-label">{move || format!("{}px", state.editor_font_size.get())}</span>
+                <span class="zoom-label">{move || format!("{}px", state.editor.font_size.get())}</span>
                 <button
                     class="btn"
                     title="增大字号"
-                    disabled=move || { state.editor_font_size.get() >= FONT_MAX }
+                    disabled=move || { state.editor.font_size.get() >= FONT_MAX }
                     on:click=move |_| bump_font(1)
                 >
                     "+"
                 </button>
                 <button
                     class="btn"
-                    class:is-active=move || state.editor_light.get()
+                    class:is-active=move || state.editor.light.get()
                     title="切换亮暗模式"
-                    on:click=move |_| state.editor_light.update(|v| *v = !*v)
+                    on:click=move |_| state.editor.light.update(|v| *v = !*v)
                 >
-                    {move || if state.editor_light.get() { "亮色" } else { "暗色" }}
+                    {move || if state.editor.light.get() { "亮色" } else { "暗色" }}
                 </button>
                 <label class="orig-check" title="在左侧显示行号。自动换行开启时行号无法与折行对齐，会暂时隐藏">
                     <input
                         type="checkbox"
-                        prop:checked=move || state.editor_line_numbers.get()
+                        prop:checked=move || state.editor.line_numbers.get()
                         on:change=move |ev| {
-                            state.editor_line_numbers.set(event_target_checked(&ev));
+                            state.editor.line_numbers.set(event_target_checked(&ev));
                         }
                     />
                     "行号"
@@ -531,9 +533,9 @@ pub fn TextEditor() -> impl IntoView {
                 <label class="orig-check" title="按编辑区宽度折行；长行不再左右滚动">
                     <input
                         type="checkbox"
-                        prop:checked=move || state.editor_word_wrap.get()
+                        prop:checked=move || state.editor.word_wrap.get()
                         on:change=move |ev| {
-                            state.editor_word_wrap.set(event_target_checked(&ev));
+                            state.editor.word_wrap.set(event_target_checked(&ev));
                         }
                     />
                     "自动换行"
@@ -550,7 +552,7 @@ pub fn TextEditor() -> impl IntoView {
                     (_, Some(Ok(_))) => view! {
                         <div class="editor-body">
                             <Show when=move || {
-                                state.editor_line_numbers.get() && !state.editor_word_wrap.get()
+                                state.editor.line_numbers.get() && !state.editor.word_wrap.get()
                             }>
                                 <pre
                                     node_ref=gutter_ref
@@ -571,13 +573,13 @@ pub fn TextEditor() -> impl IntoView {
                                 <textarea
                                     node_ref=textarea_ref
                                     class="editor-textarea"
-                                    class:is-wrap=move || state.editor_word_wrap.get()
+                                    class:is-wrap=move || state.editor.word_wrap.get()
                                     class:has-multi-caret=move || cursors.with(|cs| cs.len() > 1)
                                     style=font_style
                                     spellcheck="false"
                                     title="Alt+点击添加光标，Esc 回到最上光标"
                                     wrap=move || {
-                                        if state.editor_word_wrap.get() {
+                                        if state.editor.word_wrap.get() {
                                             "soft"
                                         } else {
                                             "off"

@@ -1,4 +1,6 @@
 use crate::structure::{FsEntry, ImageList};
+#[cfg(feature = "ssr")]
+use crate::structure::ImageRef;
 use leptos::prelude::*;
 
 #[cfg(feature = "ssr")]
@@ -75,12 +77,17 @@ fn list_dir_sync(path: &str) -> Result<Vec<FsEntry>, String> {
             is_dir,
         });
     }
+    sort_fs_entries(&mut entries);
+    Ok(entries)
+}
+
+#[cfg(any(test, feature = "ssr"))]
+pub(crate) fn sort_fs_entries(entries: &mut [FsEntry]) {
     entries.sort_by(|a, b| {
         b.is_dir
             .cmp(&a.is_dir)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-    Ok(entries)
 }
 
 #[cfg(feature = "ssr")]
@@ -165,35 +172,77 @@ pub fn collect_image_scan(rel_dir: &str, recursive: bool) -> Result<ImageScan, S
 #[cfg(feature = "ssr")]
 mod listing_cache {
     use super::ImageScan;
+    use crate::function::lru::LruCache;
     use std::sync::{Mutex, OnceLock};
 
-    struct ListingCache {
-        dir: String,
-        recursive: bool,
+    #[derive(Clone)]
+    struct ScanVal {
         epoch: u64,
         scan: ImageScan,
     }
 
-    fn slot() -> &'static Mutex<Option<ListingCache>> {
-        static SLOT: OnceLock<Mutex<Option<ListingCache>>> = OnceLock::new();
-        SLOT.get_or_init(|| Mutex::new(None))
+    fn cache() -> &'static Mutex<LruCache<(String, bool), ScanVal>> {
+        static CACHE: OnceLock<Mutex<LruCache<(String, bool), ScanVal>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(LruCache::new(16)))
     }
 
     pub fn get_or_collect(dir: &str, recursive: bool, epoch: u64) -> Result<ImageScan, String> {
-        let mut guard = slot().lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(cached) = guard.as_ref() {
-            if cached.dir == dir && cached.recursive == recursive && cached.epoch == epoch {
+        let key = (dir.to_string(), recursive);
+        let mut guard = cache().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(cached) = guard.get(&key) {
+            if cached.epoch == epoch {
                 return Ok(cached.scan.clone());
             }
         }
+        drop(guard);
         let scan = super::collect_image_scan(dir, recursive)?;
-        *guard = Some(ListingCache {
-            dir: dir.to_string(),
-            recursive,
-            epoch,
-            scan: scan.clone(),
-        });
+        let mut guard = cache().lock().unwrap_or_else(|p| p.into_inner());
+        guard.insert(
+            key,
+            ScanVal {
+                epoch,
+                scan: scan.clone(),
+            },
+        );
         Ok(scan)
+    }
+}
+
+#[cfg(feature = "ssr")]
+mod dir_list_cache {
+    use super::FsEntry;
+    use crate::function::lru::LruCache;
+    use std::sync::{Mutex, OnceLock};
+
+    #[derive(Clone)]
+    struct DirVal {
+        epoch: u64,
+        entries: Vec<FsEntry>,
+    }
+
+    fn cache() -> &'static Mutex<LruCache<String, DirVal>> {
+        static CACHE: OnceLock<Mutex<LruCache<String, DirVal>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(LruCache::new(32)))
+    }
+
+    pub fn get_or_list(path: &str, epoch: u64) -> Result<Vec<FsEntry>, String> {
+        let mut guard = cache().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(cached) = guard.get(&path.to_string()) {
+            if cached.epoch == epoch {
+                return Ok(cached.entries.clone());
+            }
+        }
+        drop(guard);
+        let entries = super::list_dir_sync(path)?;
+        let mut guard = cache().lock().unwrap_or_else(|p| p.into_inner());
+        guard.insert(
+            path.to_string(),
+            DirVal {
+                epoch,
+                entries: entries.clone(),
+            },
+        );
+        Ok(entries)
     }
 }
 
@@ -208,8 +257,8 @@ pub async fn get_root_info() -> Result<String, ServerFnError> {
 }
 
 #[server]
-pub async fn list_dir(path: String) -> Result<Vec<FsEntry>, ServerFnError> {
-    tokio::task::spawn_blocking(move || list_dir_sync(&path))
+pub async fn list_dir(path: String, epoch: u64) -> Result<Vec<FsEntry>, ServerFnError> {
+    tokio::task::spawn_blocking(move || dir_list_cache::get_or_list(&path, epoch))
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
         .map_err(ServerFnError::new)
@@ -225,10 +274,41 @@ pub async fn list_images(
         let scan = cached_image_scan(&path, recursive, epoch)?;
         Ok::<ImageList, String>(ImageList {
             truncated: scan.truncated,
-            paths: scan.records.into_iter().map(|r| r.path).collect(),
+            items: scan
+                .records
+                .into_iter()
+                .map(|r| ImageRef {
+                    path: r.path,
+                    mtime: r.mtime,
+                })
+                .collect(),
         })
     })
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .map_err(ServerFnError::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sort_fs_entries;
+    use crate::structure::FsEntry;
+
+    fn item(name: &str, is_dir: bool) -> FsEntry {
+        FsEntry {
+            name: name.into(),
+            path: name.into(),
+            is_dir,
+            is_image: !is_dir && name.ends_with(".jpg"),
+            is_text: false,
+        }
+    }
+
+    #[test]
+    fn dirs_first_then_case_insensitive_name() {
+        let mut entries = vec![item("b.jpg", false), item("A", true), item("a.jpg", false)];
+        sort_fs_entries(&mut entries);
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["A", "a.jpg", "b.jpg"]);
+    }
 }

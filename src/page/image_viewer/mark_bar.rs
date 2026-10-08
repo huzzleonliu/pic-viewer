@@ -19,6 +19,9 @@ pub(crate) fn MarkBar() -> impl IntoView {
 
     let rating = Resource::new(
         move || {
+            if state.is_text_mode() {
+                return (None, 0u64);
+            }
             (
                 state.viewed.try_get().flatten(),
                 reload.try_get().unwrap_or(0),
@@ -33,7 +36,13 @@ pub(crate) fn MarkBar() -> impl IntoView {
     );
 
     let tag_res = Resource::new(
-        move || state.viewed.try_get().flatten(),
+        move || {
+            if state.is_text_mode() {
+                None
+            } else {
+                state.viewed.try_get().flatten()
+            }
+        },
         |path| async move {
             match path {
                 Some(p) => get_image_tags(p).await,
@@ -42,35 +51,48 @@ pub(crate) fn MarkBar() -> impl IntoView {
         },
     );
 
-    Effect::new(move |_| match rating.get() {
-        Some(Ok(v)) => stars.set(v),
-        Some(Err(_)) => stars.set(0),
-        None => {}
+    Effect::new(move |_| {
+        if state.is_text_mode() {
+            return;
+        }
+        match rating.try_get() {
+            Some(Some(Ok(v))) => {
+                let _ = stars.try_update(|s| *s = v);
+            }
+            Some(Some(Err(_))) => {
+                let _ = stars.try_update(|s| *s = 0);
+            }
+            _ => {}
+        }
     });
 
-    Effect::new(move |_| match (state.viewed.get(), tag_res.get()) {
-        (None, _) => {
-            tags.set(String::new());
-            tag_tall.set(false);
+    Effect::new(move |_| {
+        if state.is_text_mode() {
+            return;
         }
-        (_, Some(Ok(v))) => {
-            tags.set(v);
-            if let Some(el) = tag_input.get() {
-                tag_tall.set(el.scroll_height() > el.client_height() + 2);
+        let Some(viewed) = state.viewed.try_get() else {
+            return;
+        };
+        let Some(res) = tag_res.try_get() else {
+            return;
+        };
+        match (viewed, res) {
+            (None, _) | (_, None) | (_, Some(Err(_))) => {
+                let _ = tags.try_update(|v| *v = String::new());
+                let _ = tag_tall.try_update(|v| *v = false);
             }
-        }
-        (_, Some(Err(_))) => {
-            tags.set(String::new());
-            tag_tall.set(false);
-        }
-        (_, None) => {
-            tags.set(String::new());
-            tag_tall.set(false);
+            (_, Some(Ok(v))) => {
+                let _ = tags.try_update(|t| *t = v);
+                if let Some(el) = tag_input.get() {
+                    let _ =
+                        tag_tall.try_update(|t| *t = el.scroll_height() > el.client_height() + 2);
+                }
+            }
         }
     });
 
     view! {
-        <div class="mark-bar" class:panel-off=move || !state.show_stars.get()>
+        <div class="mark-bar" class:panel-off=move || !state.panels.stars.get()>
             <div class="mark-stars">
                 <span class="mark-label">"星标"</span>
                 <StarButton n=1 stars busy reload/>
@@ -101,7 +123,9 @@ pub(crate) fn MarkBar() -> impl IntoView {
                         let value = tags.get();
                         leptos::task::spawn_local(async move {
                             if let Err(e) = set_image_tags(path, value).await {
-                                state.status.set(format!("tag 写入失败：{e}"));
+                                let _ = state
+                                    .status
+                                    .try_update(|s| *s = format!("tag 写入失败：{e}"));
                             }
                         });
                     }
@@ -122,13 +146,15 @@ pub(crate) fn MarkBar() -> impl IntoView {
                         leptos::task::spawn_local(async move {
                             #[cfg(target_arch = "wasm32")]
                             gloo_timers::future::TimeoutFuture::new(400).await;
-                            let still_here =
-                                state.viewed.get_untracked().as_deref() == Some(path.as_str());
-                            if still_here && tag_epoch.get_untracked() != my {
+                            let still_here = state.viewed.try_get_untracked().flatten().as_deref()
+                                == Some(path.as_str());
+                            if still_here && tag_epoch.try_get_untracked() != Some(my) {
                                 return;
                             }
                             if let Err(e) = set_image_tags(path, value).await {
-                                state.status.set(format!("tag 写入失败：{e}"));
+                                let _ = state
+                                    .status
+                                    .try_update(|s| *s = format!("tag 写入失败：{e}"));
                             }
                         });
                     }
@@ -165,23 +191,31 @@ pub(crate) fn MarkBar() -> impl IntoView {
                         match batch_mark_images(paths, rating, tags).await {
                             Ok(report) => {
                                 if report.total == 0 {
-                                    state.status.set("请先勾选图片".into());
+                                    let _ = state.status.try_update(|s| *s = "请先勾选图片".into());
                                 } else if report.failures.is_empty() {
-                                    state.status.set(format!("已批量标记 {} 张", report.ok));
+                                    let _ = state
+                                        .status
+                                        .try_update(|s| *s = format!("已批量标记 {} 张", report.ok));
                                 } else {
                                     let failed = report.failures.len();
-                                    state.status.set(format!(
-                                        "已标记 {}/{} 张，失败 {failed}",
-                                        report.ok, report.total
-                                    ));
+                                    let _ = state.status.try_update(|s| {
+                                        *s = format!(
+                                            "已标记 {}/{} 张，失败 {failed}",
+                                            report.ok, report.total
+                                        )
+                                    });
                                     state.report_failures("批量标记失败", report.failures);
                                 }
-                                reload.update(|v| *v += 1);
+                                let _ = reload.try_update(|v| *v += 1);
                             }
-                            Err(e) => state.status.set(format!("批量标记失败：{e}")),
+                            Err(e) => {
+                                let _ = state
+                                    .status
+                                    .try_update(|s| *s = format!("批量标记失败：{e}"));
+                            }
                         }
-                        busy.set(false);
-                        state.busy.set(false);
+                        let _ = busy.try_update(|v| *v = false);
+                        let _ = state.busy.try_update(|v| *v = false);
                     });
                 }
             >
@@ -224,18 +258,22 @@ fn StarButton(
                 leptos::task::spawn_local(async move {
                     match set_image_rating(path, next).await {
                         Ok(_) => {
-                            state.status.set(if next == 0 {
-                                "已清除星标".into()
-                            } else {
-                                format!("已标记 {next} 星")
+                            let _ = state.status.try_update(|s| {
+                                *s = if next == 0 {
+                                    "已清除星标".into()
+                                } else {
+                                    format!("已标记 {next} 星")
+                                }
                             });
                         }
                         Err(e) => {
-                            state.status.set(format!("星标写入失败：{e}"));
-                            reload.update(|v| *v += 1);
+                            let _ = state
+                                .status
+                                .try_update(|s| *s = format!("星标写入失败：{e}"));
+                            let _ = reload.try_update(|v| *v += 1);
                         }
                     }
-                    busy.set(false);
+                    let _ = busy.try_update(|v| *v = false);
                 });
             }
         >

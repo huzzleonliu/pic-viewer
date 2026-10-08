@@ -2,61 +2,128 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+use super::fs::FsEntry;
+
+pub const DIR_LISTING_CAP: usize = 64;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SelectedItem {
-    pub path: String,
-    pub name: String,
-    pub is_dir: bool,
-    pub is_image: bool,
-    pub is_text: bool,
+pub struct ListedDir {
+    pub epoch: u64,
+    pub entries: Option<Result<Vec<FsEntry>, String>>,
 }
 
-impl SelectedItem {
-    pub fn from_image_path(path: String) -> Self {
-        let name = path.rsplit('/').next().unwrap_or(path.as_str()).to_string();
-        Self {
-            path,
-            name,
-            is_dir: false,
-            is_image: true,
-            is_text: false,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DirListingStore {
+    by_path: HashMap<String, ListedDir>,
+    recency: Vec<String>,
+}
+
+impl DirListingStore {
+    pub fn get(&self, path: &str) -> Option<&ListedDir> {
+        self.by_path.get(path)
+    }
+
+    pub fn ok_entries(&self) -> HashMap<String, Vec<FsEntry>> {
+        self.by_path
+            .iter()
+            .filter_map(|(k, v)| {
+                v.entries
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .map(|e| (k.clone(), e.clone()))
+            })
+            .collect()
+    }
+
+    fn touch(&mut self, path: &str) {
+        self.recency.retain(|p| p != path);
+        self.recency.push(path.to_string());
+    }
+
+    pub fn begin_fetch(&mut self, path: &str, epoch: u64) -> bool {
+        if let Some(cur) = self.by_path.get(path) {
+            if cur.epoch == epoch {
+                self.touch(path);
+                return false;
+            }
+        }
+        self.by_path.insert(
+            path.to_string(),
+            ListedDir {
+                epoch,
+                entries: None,
+            },
+        );
+        self.touch(path);
+        true
+    }
+
+    pub fn finish(
+        &mut self,
+        path: String,
+        epoch: u64,
+        result: Result<Vec<FsEntry>, String>,
+        keep: &HashSet<String>,
+    ) {
+        match self.by_path.get(&path) {
+            Some(cur) if cur.epoch == epoch => {}
+            _ => return,
+        }
+        self.by_path.insert(
+            path.clone(),
+            ListedDir {
+                epoch,
+                entries: Some(result),
+            },
+        );
+        self.touch(&path);
+        self.evict(keep);
+    }
+
+    pub fn forget_path(&mut self, path: &str) {
+        if path.is_empty() {
+            return;
+        }
+        let prefix = format!("{path}/");
+        self.by_path
+            .retain(|k, _| k != path && !k.starts_with(&prefix));
+        self.recency
+            .retain(|k| k != path && !k.starts_with(&prefix));
+    }
+
+    pub fn retarget_with(&mut self, map: impl Fn(&str) -> String) {
+        let mut next = HashMap::new();
+        for (k, mut listed) in std::mem::take(&mut self.by_path) {
+            if let Some(Ok(entries)) = listed.entries.as_mut() {
+                for entry in entries.iter_mut() {
+                    entry.path = map(&entry.path);
+                }
+            }
+            next.insert(map(&k), listed);
+        }
+        self.by_path = next;
+        for path in &mut self.recency {
+            *path = map(path);
         }
     }
 
-    pub fn root() -> Self {
-        Self {
-            path: String::new(),
-            name: "/".into(),
-            is_dir: true,
-            is_image: false,
-            is_text: false,
+    fn evict(&mut self, keep: &HashSet<String>) {
+        while self.by_path.len() > DIR_LISTING_CAP {
+            let Some(victim) = self
+                .recency
+                .iter()
+                .find(|p| !keep.contains(*p) && !p.is_empty())
+                .cloned()
+            else {
+                break;
+            };
+            self.by_path.remove(&victim);
+            self.recency.retain(|p| p != &victim);
         }
     }
 }
 
-impl From<&super::fs::FsEntry> for SelectedItem {
-    fn from(entry: &super::fs::FsEntry) -> Self {
-        Self {
-            path: entry.path.clone(),
-            name: entry.name.clone(),
-            is_dir: entry.is_dir,
-            is_image: entry.is_image,
-            is_text: entry.is_text,
-        }
-    }
-}
-
-impl From<super::fs::FsEntry> for SelectedItem {
-    fn from(entry: super::fs::FsEntry) -> Self {
-        Self {
-            path: entry.path,
-            name: entry.name,
-            is_dir: entry.is_dir,
-            is_image: entry.is_image,
-            is_text: entry.is_text,
-        }
-    }
-}
+pub type SelectedItem = super::fs::FsItem;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CheckedList {
@@ -132,23 +199,6 @@ impl CheckedList {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClipboardItem {
-    pub path: String,
-    pub name: String,
-    pub is_dir: bool,
-}
-
-impl From<&SelectedItem> for ClipboardItem {
-    fn from(item: &SelectedItem) -> Self {
-        Self {
-            path: item.path.clone(),
-            name: item.name.clone(),
-            is_dir: item.is_dir,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardMode {
     Copy,
@@ -157,7 +207,7 @@ pub enum ClipboardMode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Clipboard {
-    pub items: Vec<ClipboardItem>,
+    pub items: Vec<super::fs::FsItem>,
     pub mode: ClipboardMode,
 }
 
@@ -197,15 +247,37 @@ pub struct BatchRenameDraft {
 }
 
 #[derive(Clone, Copy)]
+pub struct PanelFlags {
+    pub thumbnails: RwSignal<bool>,
+    pub adjust: RwSignal<bool>,
+    pub file_manager: RwSignal<bool>,
+    pub stars: RwSignal<bool>,
+    pub filter: RwSignal<bool>,
+    pub export: RwSignal<bool>,
+    pub crop: RwSignal<bool>,
+    pub editor_settings: RwSignal<bool>,
+}
+
+#[derive(Clone, Copy)]
+pub struct EditorPrefs {
+    pub font_size: RwSignal<u32>,
+    pub light: RwSignal<bool>,
+    pub line_numbers: RwSignal<bool>,
+    pub word_wrap: RwSignal<bool>,
+}
+
+#[derive(Clone, Copy)]
 pub struct ExplorerState {
     pub selected: RwSignal<Option<SelectedItem>>,
     pub clipboard: RwSignal<Option<Clipboard>>,
     pub checked: RwSignal<CheckedList>,
     pub check_anchor: RwSignal<Option<String>>,
-    pub dir_listings: RwSignal<HashMap<String, Vec<super::fs::FsEntry>>>,
+    pub dir_listings: RwSignal<DirListingStore>,
     pub viewed: RwSignal<Option<String>>,
     pub browse_dir: RwSignal<Option<String>>,
-    pub refresh: RwSignal<u64>,
+    pub include_subdirs: RwSignal<bool>,
+    pub tree_epoch: RwSignal<u64>,
+    pub gallery_epoch: RwSignal<u64>,
     pub media_rev: RwSignal<u64>,
     pub status: RwSignal<String>,
     pub confirm_delete: RwSignal<Option<Vec<SelectedItem>>>,
@@ -217,18 +289,8 @@ pub struct ExplorerState {
     pub mkfile_parent: RwSignal<Option<String>>,
     pub mkfile_draft: RwSignal<String>,
     pub busy: RwSignal<bool>,
-    pub show_thumbnails: RwSignal<bool>,
-    pub show_adjust: RwSignal<bool>,
-    pub show_file_manager: RwSignal<bool>,
-    pub show_stars: RwSignal<bool>,
-    pub show_filter: RwSignal<bool>,
-    pub show_export: RwSignal<bool>,
-    pub show_crop: RwSignal<bool>,
-    pub show_editor_settings: RwSignal<bool>,
-    pub editor_font_size: RwSignal<u32>,
-    pub editor_light: RwSignal<bool>,
-    pub editor_line_numbers: RwSignal<bool>,
-    pub editor_word_wrap: RwSignal<bool>,
+    pub panels: PanelFlags,
+    pub editor: EditorPrefs,
     pub filter_paths: RwSignal<Option<HashSet<String>>>,
     pub failure_report: RwSignal<Option<FailureReport>>,
     pub expanded_dirs: RwSignal<HashSet<String>>,
@@ -237,14 +299,16 @@ pub struct ExplorerState {
 impl ExplorerState {
     pub fn new() -> Self {
         Self {
-            selected: RwSignal::new(None),
+            selected: RwSignal::new(Some(SelectedItem::root())),
             clipboard: RwSignal::new(None),
             checked: RwSignal::new(CheckedList::default()),
             check_anchor: RwSignal::new(None),
-            dir_listings: RwSignal::new(HashMap::new()),
+            dir_listings: RwSignal::new(DirListingStore::default()),
             viewed: RwSignal::new(None),
             browse_dir: RwSignal::new(None),
-            refresh: RwSignal::new(0),
+            include_subdirs: RwSignal::new(false),
+            tree_epoch: RwSignal::new(0),
+            gallery_epoch: RwSignal::new(0),
             media_rev: RwSignal::new(0),
             status: RwSignal::new("就绪".into()),
             confirm_delete: RwSignal::new(None),
@@ -256,22 +320,39 @@ impl ExplorerState {
             mkfile_parent: RwSignal::new(None),
             mkfile_draft: RwSignal::new(String::new()),
             busy: RwSignal::new(false),
-            show_thumbnails: RwSignal::new(true),
-            show_adjust: RwSignal::new(true),
-            show_file_manager: RwSignal::new(true),
-            show_stars: RwSignal::new(false),
-            show_filter: RwSignal::new(false),
-            show_export: RwSignal::new(false),
-            show_crop: RwSignal::new(false),
-            show_editor_settings: RwSignal::new(false),
-            editor_font_size: RwSignal::new(15),
-            editor_light: RwSignal::new(false),
-            editor_line_numbers: RwSignal::new(true),
-            editor_word_wrap: RwSignal::new(false),
+            panels: PanelFlags {
+                thumbnails: RwSignal::new(true),
+                adjust: RwSignal::new(true),
+                file_manager: RwSignal::new(true),
+                stars: RwSignal::new(false),
+                filter: RwSignal::new(false),
+                export: RwSignal::new(false),
+                crop: RwSignal::new(false),
+                editor_settings: RwSignal::new(false),
+            },
+            editor: EditorPrefs {
+                font_size: RwSignal::new(15),
+                light: RwSignal::new(false),
+                line_numbers: RwSignal::new(true),
+                word_wrap: RwSignal::new(false),
+            },
             filter_paths: RwSignal::new(None),
             failure_report: RwSignal::new(None),
             expanded_dirs: RwSignal::new(HashSet::from([String::new()])),
         }
+    }
+
+    pub fn bump_tree(self) {
+        let _ = self.tree_epoch.try_update(|n| *n += 1);
+    }
+
+    pub fn bump_gallery(self) {
+        let _ = self.gallery_epoch.try_update(|n| *n += 1);
+    }
+
+    pub fn bump_listings(self) {
+        self.bump_tree();
+        self.bump_gallery();
     }
 
     pub fn is_text_mode(self) -> bool {
@@ -299,9 +380,94 @@ impl ExplorerState {
         if failures.is_empty() {
             return;
         }
-        self.failure_report.set(Some(FailureReport {
-            title: title.to_string(),
-            failures,
-        }));
+        let _ = self.failure_report.try_update(|v| {
+            *v = Some(FailureReport {
+                title: title.to_string(),
+                failures,
+            });
+        });
+    }
+}
+
+#[cfg(test)]
+mod listing_store_tests {
+    use super::{DirListingStore, DIR_LISTING_CAP};
+    use crate::structure::FsEntry;
+    use std::collections::HashSet;
+
+    fn file(path: &str) -> FsEntry {
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        FsEntry {
+            name,
+            path: path.to_string(),
+            is_dir: false,
+            is_image: path.ends_with(".jpg"),
+            is_text: path.ends_with(".txt"),
+        }
+    }
+
+    #[test]
+    fn same_epoch_does_not_refetch() {
+        let mut store = DirListingStore::default();
+        let keep = HashSet::from([String::new()]);
+        assert!(store.begin_fetch("", 1));
+        store.finish(String::new(), 1, Ok(vec![file("a.txt")]), &keep);
+        assert!(!store.begin_fetch("", 1));
+        assert!(store.begin_fetch("", 2));
+    }
+
+    #[test]
+    fn forget_drops_path_and_children() {
+        let mut store = DirListingStore::default();
+        let keep = HashSet::from([String::new(), "photos".into()]);
+        store.begin_fetch("", 1);
+        store.finish(String::new(), 1, Ok(vec![file("photos/a.jpg")]), &keep);
+        store.begin_fetch("photos", 1);
+        store.finish("photos".into(), 1, Ok(vec![file("photos/a.jpg")]), &keep);
+        store.forget_path("photos");
+        assert!(store.get("photos").is_none());
+        assert!(store.get("").is_some());
+    }
+
+    #[test]
+    fn evicts_unexpanded_when_over_cap() {
+        let mut store = DirListingStore::default();
+        let keep = HashSet::from([String::new()]);
+        store.begin_fetch("", 1);
+        store.finish(String::new(), 1, Ok(Vec::new()), &keep);
+        for i in 0..=DIR_LISTING_CAP {
+            let path = format!("d{i}");
+            store.begin_fetch(&path, 1);
+            store.finish(path, 1, Ok(Vec::new()), &keep);
+        }
+        assert!(store.by_path.len() <= DIR_LISTING_CAP);
+        assert!(store.get("").is_some());
+    }
+}
+
+#[cfg(test)]
+mod checked_list_tests {
+    use super::CheckedList;
+    use crate::structure::FsItem;
+
+    fn item(path: &str) -> FsItem {
+        FsItem::from_kind(
+            path.rsplit('/').next().unwrap_or(path).into(),
+            path.into(),
+            crate::structure::FsKind::Other,
+        )
+    }
+
+    #[test]
+    fn keeps_order_and_dedups() {
+        let mut list = CheckedList::default();
+        list.insert_missing(item("b"));
+        list.insert_missing(item("a"));
+        list.insert_missing(item("b"));
+        let paths: Vec<_> = list.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths, ["b", "a"]);
+        list.set_item(item("b"), false);
+        let paths: Vec<_> = list.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths, ["a"]);
     }
 }

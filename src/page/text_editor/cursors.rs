@@ -1,3 +1,4 @@
+//! 多光标只在 wasm 编辑器里启用；单光标不走 caret overlay，缩进逻辑仍共用。
 use super::indent::{byte_to_utf16, unindent_line, utf16_to_byte};
 
 pub fn normalize(carets: &mut Vec<u32>) {

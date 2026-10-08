@@ -29,7 +29,10 @@ pub fn to_rel(full: &Path) -> String {
 }
 
 pub fn resolve_path(rel: &str) -> Result<PathBuf, String> {
-    let root = pic_root();
+    resolve_under(pic_root(), rel)
+}
+
+pub fn resolve_under(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let rel = rel.trim_start_matches('/');
     if rel.contains('\0') {
         return Err("非法路径".into());
@@ -126,5 +129,64 @@ pub fn mime_for(path: &Path) -> &'static str {
         Some("ico") => "image/x-icon",
         Some("tif") | Some("tiff") => "image/tiff",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_recursively, resolve_under, unique_dest};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn scratch() -> PathBuf {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "pic-viewer-sandbox-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn resolve_rejects_parent_and_null() {
+        let root = scratch();
+        assert!(resolve_under(&root, "..").is_err());
+        assert!(resolve_under(&root, "a/../b").is_err());
+        assert!(resolve_under(&root, "a\0b").is_err());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn resolve_allows_existing_child_and_new_name() {
+        let root = scratch();
+        fs::create_dir(root.join("album")).unwrap();
+        fs::write(root.join("album/a.txt"), b"ok").unwrap();
+        let got = resolve_under(&root, "album/a.txt").unwrap();
+        assert_eq!(got, root.join("album/a.txt"));
+        let pending = resolve_under(&root, "album/new.txt").unwrap();
+        assert_eq!(pending, root.join("album/new.txt"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn unique_dest_adds_numeric_suffix() {
+        let root = scratch();
+        fs::write(root.join("a.txt"), b"1").unwrap();
+        let dest = unique_dest(&root, "a.txt");
+        assert_eq!(dest.file_name().unwrap(), "a (1).txt");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn copy_recursively_copies_tree() {
+        let root = scratch();
+        fs::create_dir(root.join("from")).unwrap();
+        fs::write(root.join("from/a.txt"), b"hi").unwrap();
+        copy_recursively(&root.join("from"), &root.join("to")).unwrap();
+        assert_eq!(fs::read(root.join("to/a.txt")).unwrap(), b"hi");
+        fs::remove_dir_all(&root).ok();
     }
 }

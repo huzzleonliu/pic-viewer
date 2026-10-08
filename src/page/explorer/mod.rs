@@ -30,22 +30,22 @@ pub fn Explorer() -> impl IntoView {
                     <span class="header-sep">" | "</span>
                     <Show when=move || !state.is_text_mode()>
                         <span class="header-toggle-group">
-                            <PanelToggle label="缩略图" on=state.show_thumbnails/>
-                            <PanelToggle label="标记" on=state.show_stars/>
-                            <PanelToggle label="筛选" on=state.show_filter/>
-                            <PanelToggle label="导出" on=state.show_export/>
-                            <PanelToggle label="简单调整" on=state.show_adjust/>
-                            <PanelToggle label="裁剪" on=state.show_crop/>
+                            <PanelToggle label="缩略图" on=state.panels.thumbnails/>
+                            <PanelToggle label="标记" on=state.panels.stars/>
+                            <PanelToggle label="筛选" on=state.panels.filter/>
+                            <PanelToggle label="导出" on=state.panels.export/>
+                            <PanelToggle label="简单调整" on=state.panels.adjust/>
+                            <PanelToggle label="裁剪" on=state.panels.crop/>
                         </span>
                     </Show>
                     <Show when=move || state.is_text_mode()>
                         <span class="header-toggle-group">
-                            <PanelToggle label="简单调整" on=state.show_adjust/>
-                            <PanelToggle label="界面设置" on=state.show_editor_settings/>
+                            <PanelToggle label="简单调整" on=state.panels.adjust/>
+                            <PanelToggle label="界面设置" on=state.panels.editor_settings/>
                         </span>
                     </Show>
                     <span class="header-sep">" | "</span>
-                    <PanelToggle label="文件管理器" on=state.show_file_manager/>
+                    <PanelToggle label="文件管理器" on=state.panels.file_manager/>
                 </div>
             </header>
             <div class="workspace">

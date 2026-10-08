@@ -1,5 +1,5 @@
-use crate::function::list_dir;
-use crate::structure::{ClipboardMode, ExplorerState, FsEntry, SelectedItem};
+use crate::function::Nav;
+use crate::structure::{ClipboardMode, ExplorerState, FsEntry, ListedDir, SelectedItem};
 use leptos::prelude::*;
 
 #[component]
@@ -16,7 +16,7 @@ pub fn FilePane() -> impl IntoView {
     let clipboard_empty = move || state.clipboard.get().is_none() || state.busy.get();
 
     view! {
-        <aside class="sidebar" class:panel-off=move || !state.show_file_manager.get()>
+        <aside class="sidebar" class:panel-off=move || !state.panels.file_manager.get()>
             <div class="toolbar-stack">
                 <div class="toolbar">
                     <span class="toolbar-label">"当前项"</span>
@@ -98,7 +98,7 @@ pub fn FilePane() -> impl IntoView {
                         class="btn btn-ghost"
                         title="刷新"
                         on:click=move |_| {
-                            state.refresh.update(|n| *n += 1);
+                            state.bump_listings();
                             state.status.set("已刷新".into());
                         }
                     >
@@ -185,7 +185,7 @@ pub fn FilePane() -> impl IntoView {
                         title="刷新并清空勾选"
                         on:click=move |_| {
                             state.checked.update(|list| list.clear());
-                            state.refresh.update(|n| *n += 1);
+                            state.bump_listings();
                             state.status.set("已刷新，已清空勾选".into());
                         }
                     >
@@ -229,8 +229,12 @@ fn RootTree() -> impl IntoView {
     };
 
     Effect::new(move |_| {
-        if state.selected.get().is_none() {
-            state.selected.set(Some(SelectedItem::root()));
+        let epoch = state.tree_epoch.try_get().unwrap_or(0);
+        let Some(expanded) = state.expanded_dirs.try_get() else {
+            return;
+        };
+        for path in expanded {
+            state.ensure_dir_listing(path, epoch);
         }
     });
 
@@ -246,39 +250,6 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     let is_image = item.is_image;
     let is_text = item.is_text;
     let name_for_view = item.name.clone();
-    let path_expanded = path.clone();
-
-    let children = Resource::new(
-        move || {
-            (
-                state.is_expanded(&path_expanded),
-                state.refresh.try_get().unwrap_or(0),
-            )
-        },
-        {
-            let path = path.clone();
-            move |(open, _)| {
-                let path = path.clone();
-                async move {
-                    if open && is_dir {
-                        list_dir(path).await
-                    } else {
-                        Ok(Vec::new())
-                    }
-                }
-            }
-        },
-    );
-
-    let path_listing = path.clone();
-    Effect::new(move |_| {
-        if !is_dir || !state.is_expanded(&path_listing) {
-            return;
-        }
-        if let Some(Ok(entries)) = children.get() {
-            state.remember_dir_listing(path_listing.clone(), entries);
-        }
-    });
 
     let select = {
         let item = item.clone();
@@ -302,6 +273,13 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
     let path_show = path.clone();
     let path_box = path.clone();
     let item_check = item.clone();
+    let listing_path = path.clone();
+    let listing = Memo::new(move |_| {
+        state
+            .dir_listings
+            .try_with(|store| store.get(&listing_path).cloned())
+            .flatten()
+    });
 
     view! {
         <li class="tree-li">
@@ -373,35 +351,49 @@ fn TreeNode(entry: FsEntry, depth: u32) -> impl IntoView {
                 </div>
             </div>
             <Show when=move || is_dir && state.is_expanded(&path_show)>
-                <Suspense fallback=|| view! { <div class="tree-loading">"加载中…"</div> }>
-                    {move || {
-                        children.get().map(|res| match res {
-                            Ok(entries) if entries.is_empty() => view! {
-                                <div class="tree-empty" style=format!("padding-left:{}px", indent + 22)>
-                                    "空目录"
-                                </div>
-                            }.into_any(),
-                            Ok(entries) => {
-                                let next = depth + 1;
-                                view! {
-                                    <ul class="tree">
-                                        {entries
-                                            .into_iter()
-                                            .map(|child| {
-                                                view! { <TreeNode entry=child depth=next/> }.into_any()
-                                            })
-                                            .collect_view()}
-                                    </ul>
-                                }.into_any()
+                {move || {
+                    match listing.get() {
+                        None | Some(ListedDir { entries: None, .. }) => view! {
+                            <div class="tree-loading">"加载中…"</div>
+                        }
+                        .into_any(),
+                        Some(ListedDir {
+                            entries: Some(Ok(entries)),
+                            ..
+                        }) if entries.is_empty() => view! {
+                            <div class="tree-empty" style=format!("padding-left:{}px", indent + 22)>
+                                "空目录"
+                            </div>
+                        }
+                        .into_any(),
+                        Some(ListedDir {
+                            entries: Some(Ok(entries)),
+                            ..
+                        }) => {
+                            let next = depth + 1;
+                            view! {
+                                <ul class="tree">
+                                    {entries
+                                        .into_iter()
+                                        .map(|child| {
+                                            view! { <TreeNode entry=child depth=next/> }.into_any()
+                                        })
+                                        .collect_view()}
+                                </ul>
                             }
-                            Err(e) => view! {
-                                <div class="tree-error" style=format!("padding-left:{}px", indent + 22)>
-                                    {e.to_string()}
-                                </div>
-                            }.into_any(),
-                        })
-                    }}
-                </Suspense>
+                            .into_any()
+                        }
+                        Some(ListedDir {
+                            entries: Some(Err(e)),
+                            ..
+                        }) => view! {
+                            <div class="tree-error" style=format!("padding-left:{}px", indent + 22)>
+                                {e}
+                            </div>
+                        }
+                        .into_any(),
+                    }
+                }}
             </Show>
         </li>
     }.into_any()
@@ -415,8 +407,10 @@ fn expand_and_select(
         ev.stop_propagation();
         if item.is_dir {
             state.toggle_expanded(&item.path);
-            state.check_anchor.set(Some(item.path.clone()));
-            state.selected.set(Some(item.clone()));
+            let _ = state
+                .check_anchor
+                .try_update(|v| *v = Some(item.path.clone()));
+            state.navigate(Nav::Focus(item.clone()));
         }
     }
 }

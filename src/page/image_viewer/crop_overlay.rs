@@ -1,6 +1,7 @@
 use crate::function::crop::{
-    image_norm_to_stage, move_rect, resize_corner, snap_moved_rect, snap_resized_rect,
-    stage_box_to_image_norm, visual_rect_from_layout, CropCorner, CropRect, SNAP_THRESHOLD,
+    contain_content_rect, image_norm_to_stage, move_rect, resize_corner, snap_moved_rect,
+    snap_resized_rect, stage_box_to_image_norm, visual_rect_from_layout, CropCorner, CropRect,
+    SNAP_THRESHOLD,
 };
 use leptos::ev;
 use leptos::html;
@@ -28,6 +29,7 @@ enum CropDrag {
 pub fn CropOverlay(
     stage_ref: NodeRef<html::Div>,
     host_ref: NodeRef<html::Div>,
+    img_ref: NodeRef<html::Img>,
     norm: RwSignal<Option<CropRect>>,
     ratio: Signal<(u32, u32)>,
     zoom: RwSignal<f64>,
@@ -38,7 +40,7 @@ pub fn CropOverlay(
     let image_now = move || {
         let z = zoom.get_untracked();
         let p = pan.get_untracked();
-        predicted_image_in_stage(stage_ref, host_ref, z, p)
+        predicted_image_in_stage(stage_ref, host_ref, img_ref, z, p)
     };
 
     let local_pos = move |ev: &ev::MouseEvent| -> Option<(f64, f64)> {
@@ -174,7 +176,7 @@ pub fn CropOverlay(
                         };
                         let z = zoom.get();
                         let p = pan.get();
-                        predicted_image_in_stage(stage_ref, host_ref, z, p)
+                        predicted_image_in_stage(stage_ref, host_ref, img_ref, z, p)
                             .map(|(ix, iy, iw, ih)| {
                                 let r = image_norm_to_stage(n.x, n.y, n.w, n.h, ix, iy, iw, ih);
                                 format!(
@@ -198,6 +200,7 @@ pub fn CropOverlay(
                                 drag,
                                 stage_ref,
                                 host_ref,
+                                img_ref,
                                 zoom,
                                 pan,
                             )
@@ -215,6 +218,7 @@ pub fn CropOverlay(
                                 drag,
                                 stage_ref,
                                 host_ref,
+                                img_ref,
                                 zoom,
                                 pan,
                             )
@@ -232,6 +236,7 @@ pub fn CropOverlay(
                                 drag,
                                 stage_ref,
                                 host_ref,
+                                img_ref,
                                 zoom,
                                 pan,
                             )
@@ -249,6 +254,7 @@ pub fn CropOverlay(
                                 drag,
                                 stage_ref,
                                 host_ref,
+                                img_ref,
                                 zoom,
                                 pan,
                             )
@@ -267,6 +273,7 @@ fn start_handle(
     drag: RwSignal<CropDrag>,
     stage_ref: NodeRef<html::Div>,
     host_ref: NodeRef<html::Div>,
+    img_ref: NodeRef<html::Img>,
     zoom: RwSignal<f64>,
     pan: RwSignal<(f64, f64)>,
 ) {
@@ -281,6 +288,7 @@ fn start_handle(
     let Some((ix, iy, iw, ih)) = predicted_image_in_stage(
         stage_ref,
         host_ref,
+        img_ref,
         zoom.get_untracked(),
         pan.get_untracked(),
     ) else {
@@ -297,7 +305,14 @@ fn stage_metrics(stage_ref: NodeRef<html::Div>) -> Option<(f64, f64, f64, f64)> 
     {
         let stage = stage_ref.get()?;
         let sr = stage.get_bounding_client_rect();
-        Some((sr.left(), sr.top(), sr.width(), sr.height()))
+        let left = sr.left() + f64::from(stage.client_left());
+        let top = sr.top() + f64::from(stage.client_top());
+        Some((
+            left,
+            top,
+            f64::from(stage.client_width()),
+            f64::from(stage.client_height()),
+        ))
     }
     #[cfg(not(feature = "hydrate"))]
     {
@@ -309,6 +324,7 @@ fn stage_metrics(stage_ref: NodeRef<html::Div>) -> Option<(f64, f64, f64, f64)> 
 fn predicted_image_in_stage(
     stage_ref: NodeRef<html::Div>,
     host_ref: NodeRef<html::Div>,
+    img_ref: NodeRef<html::Img>,
     zoom: f64,
     pan: (f64, f64),
 ) -> Option<(f64, f64, f64, f64)> {
@@ -316,8 +332,45 @@ fn predicted_image_in_stage(
         return None;
     }
     let (left, top, lw, lh) = untransformed_host_in_stage(stage_ref, host_ref)?;
+    let (left, top, lw, lh) = apply_contain_inset(img_ref, left, top, lw, lh);
     let vis = visual_rect_from_layout(left, top, lw, lh, zoom, pan.0, pan.1);
     Some((vis.x, vis.y, vis.w, vis.h))
+}
+
+fn apply_contain_inset(
+    img_ref: NodeRef<html::Img>,
+    left: f64,
+    top: f64,
+    lw: f64,
+    lh: f64,
+) -> (f64, f64, f64, f64) {
+    let (nw, nh) = img_natural_size(img_ref);
+    let r = contain_content_rect(lw, lh, nw, nh);
+    if r.w >= 1.0 && r.h >= 1.0 {
+        (left + r.x, top + r.y, r.w, r.h)
+    } else {
+        (left, top, lw, lh)
+    }
+}
+
+fn img_natural_size(img_ref: NodeRef<html::Img>) -> (f64, f64) {
+    #[cfg(feature = "hydrate")]
+    {
+        img_ref
+            .get()
+            .map(|img| {
+                (
+                    f64::from(img.natural_width()),
+                    f64::from(img.natural_height()),
+                )
+            })
+            .unwrap_or((0.0, 0.0))
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = img_ref;
+        (0.0, 0.0)
+    }
 }
 
 fn untransformed_host_in_stage(
@@ -326,17 +379,28 @@ fn untransformed_host_in_stage(
 ) -> Option<(f64, f64, f64, f64)> {
     #[cfg(feature = "hydrate")]
     {
+        use wasm_bindgen::JsCast;
         let stage = stage_ref.get()?;
         let host = host_ref.get()?;
-        let sr = stage.get_bounding_client_rect();
-        let hr = host.get_bounding_client_rect();
-        let w = hr.width();
-        let h = hr.height();
+        let w = f64::from(host.offset_width());
+        let h = f64::from(host.offset_height());
         if w < 1.0 || h < 1.0 {
-            None
-        } else {
-            Some((hr.left() - sr.left(), hr.top() - sr.top(), w, h))
+            return None;
         }
+        let stage_el: web_sys::Element = stage.clone().into();
+        let mut x = 0.0;
+        let mut y = 0.0;
+        let mut cur: web_sys::HtmlElement = host.clone().into();
+        loop {
+            x += f64::from(cur.offset_left());
+            y += f64::from(cur.offset_top());
+            let parent = cur.offset_parent()?;
+            if parent == stage_el {
+                break;
+            }
+            cur = parent.dyn_into().ok()?;
+        }
+        Some((x, y, w, h))
     }
     #[cfg(not(feature = "hydrate"))]
     {

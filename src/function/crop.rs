@@ -344,6 +344,27 @@ pub fn fitted_norm(img_w: f64, img_h: f64, ratio_w: f64, ratio_h: f64) -> CropRe
     CropRect { x, y, w, h }
 }
 
+/// `object-fit: contain` 时，图片内容在元素盒里的像素矩形。
+pub fn contain_content_rect(box_w: f64, box_h: f64, nat_w: f64, nat_h: f64) -> CropRect {
+    if box_w <= 0.0 || box_h <= 0.0 || nat_w <= 0.0 || nat_h <= 0.0 {
+        return CropRect {
+            x: 0.0,
+            y: 0.0,
+            w: box_w.max(0.0),
+            h: box_h.max(0.0),
+        };
+    }
+    let scale = (box_w / nat_w).min(box_h / nat_h);
+    let w = nat_w * scale;
+    let h = nat_h * scale;
+    CropRect {
+        x: (box_w - w) * 0.5,
+        y: (box_h - h) * 0.5,
+        w,
+        h,
+    }
+}
+
 pub fn canvas_placement(
     src_w: u32,
     src_h: u32,
@@ -505,9 +526,9 @@ mod io {
 #[cfg(test)]
 mod tests {
     use super::{
-        canvas_placement, fitted_crop, fitted_norm, image_norm_to_stage, initial_box_in_stage,
-        move_rect, resize_corner, scale_rect_around, snap_moved_rect, snap_resized_rect,
-        stage_box_to_image_norm, visual_rect_from_layout, CropCorner, CropRect,
+        canvas_placement, contain_content_rect, fitted_crop, fitted_norm, image_norm_to_stage,
+        initial_box_in_stage, move_rect, resize_corner, scale_rect_around, snap_moved_rect,
+        snap_resized_rect, stage_box_to_image_norm, visual_rect_from_layout, CropCorner, CropRect,
     };
 
     #[test]
@@ -647,6 +668,33 @@ mod tests {
         assert!((snapped.x - 50.0).abs() < 1e-9);
         assert!(((snapped.x + snapped.w) - 250.0).abs() < 1e-9);
         assert!((snapped.w / snapped.h - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn contain_letterbox_is_centered() {
+        let r = contain_content_rect(200.0, 100.0, 50.0, 50.0);
+        assert!((r.x - 50.0).abs() < 1e-9);
+        assert!((r.y - 0.0).abs() < 1e-9);
+        assert!((r.w - 100.0).abs() < 1e-9);
+        assert!((r.h - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn contain_matching_aspect_fills_box() {
+        let r = contain_content_rect(300.0, 400.0, 3000.0, 4000.0);
+        assert!(r.x.abs() < 1e-9);
+        assert!(r.y.abs() < 1e-9);
+        assert!((r.w - 300.0).abs() < 1e-9);
+        assert!((r.h - 400.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn already_scaled_rect_must_not_be_scaled_again() {
+        let layout = visual_rect_from_layout(40.0, 80.0, 100.0, 200.0, 1.0, 0.0, 0.0);
+        let once = visual_rect_from_layout(layout.x, layout.y, layout.w, layout.h, 2.0, 0.0, 0.0);
+        let twice = visual_rect_from_layout(once.x, once.y, once.w, once.h, 2.0, 0.0, 0.0);
+        assert!((once.y - (-20.0)).abs() < 1e-9);
+        assert!(twice.y < once.y);
     }
 
     #[test]

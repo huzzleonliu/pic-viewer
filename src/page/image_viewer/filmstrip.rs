@@ -1,6 +1,6 @@
 use super::FILMSTRIP_PAGE;
-use crate::function::thumb_url;
-use crate::structure::{ExplorerState, FsEntry, SelectedItem};
+use crate::function::{thumb_url, with_file_rev, Nav};
+use crate::structure::{ExplorerState, ImageRef, SelectedItem};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -15,11 +15,11 @@ fn filmstrip_pages(n: usize) -> usize {
 
 #[component]
 pub(crate) fn FilmstripRail(
-    paths: Vec<String>,
+    items: Vec<ImageRef>,
     thumb_page: RwSignal<usize>,
     rail_ref: NodeRef<html::Div>,
 ) -> impl IntoView {
-    let paths = StoredValue::new(paths);
+    let items = StoredValue::new(items);
 
     view! {
         <div
@@ -41,13 +41,13 @@ pub(crate) fn FilmstripRail(
             }
         >
             {move || {
-                let n = paths.with_value(|e| e.len());
+                let n = items.with_value(|e| e.len());
                 let pages = filmstrip_pages(n);
                 let last = pages.saturating_sub(1);
                 let page = thumb_page.get().min(last);
                 let start = page * FILMSTRIP_PAGE;
                 let end = (start + FILMSTRIP_PAGE).min(n);
-                let slice = paths.with_value(|e| e[start..end].to_vec());
+                let slice = items.with_value(|e| e[start..end].to_vec());
                 let page_disp = page + 1;
                 view! {
                     <div class="filmstrip">
@@ -67,7 +67,7 @@ pub(crate) fn FilmstripRail(
                         }}
                         {slice
                             .into_iter()
-                            .map(|path| view! { <Thumb entry=FsEntry::image_from_path(path)/> })
+                            .map(|item| view! { <Thumb item=item/> })
                             .collect_view()}
                         {if pages > 1 && page < last {
                             Some(view! {
@@ -114,23 +114,24 @@ where
 }
 
 #[component]
-fn Thumb(entry: FsEntry) -> impl IntoView {
+fn Thumb(item: ImageRef) -> impl IntoView {
     let state = expect_context::<ExplorerState>();
-    let item = SelectedItem::from(&entry);
-    let path = item.path.clone();
-    let name = item.name.clone();
+    let selected = SelectedItem::from_image_path(item.path.clone());
+    let path = selected.path.clone();
+    let name = selected.name.clone();
+    let mtime = item.mtime;
     let src = {
         let path = path.clone();
-        move || format!("{}?v={}", thumb_url(&path), state.media_rev.get())
+        move || with_file_rev(thumb_url(&path), mtime, state.media_rev.get())
     };
     let path_active = path.clone();
     let path_checked_class = path.clone();
     let path_checked_box = path.clone();
-    let item_check = item.clone();
+    let item_check = selected.clone();
+    let open_path = item.path.clone();
 
     let open = move |_| {
-        state.viewed.set(Some(item.path.clone()));
-        state.selected.set(Some(item.clone()));
+        state.navigate(Nav::OpenImage(open_path.clone()));
     };
 
     view! {

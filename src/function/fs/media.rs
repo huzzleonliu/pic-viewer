@@ -185,10 +185,6 @@ async fn serve_imgproxy(path: String, processing: &'static str) -> axum::respons
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|v| HeaderValue::from_bytes(v.as_bytes()).ok());
-            let cache_control = upstream
-                .headers()
-                .get(reqwest::header::CACHE_CONTROL)
-                .and_then(|v| HeaderValue::from_bytes(v.as_bytes()).ok());
             let etag = upstream
                 .headers()
                 .get(reqwest::header::ETAG)
@@ -200,14 +196,10 @@ async fn serve_imgproxy(path: String, processing: &'static str) -> axum::respons
             if let Some(v) = content_type {
                 headers.insert(header::CONTENT_TYPE, v);
             }
-            if let Some(v) = cache_control {
-                headers.insert(header::CACHE_CONTROL, v);
-            } else {
-                headers.insert(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static("private, max-age=120"),
-                );
-            }
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, max-age=120"),
+            );
             if let Some(v) = etag {
                 headers.insert(header::ETAG, v);
             }

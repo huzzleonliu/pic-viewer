@@ -24,7 +24,7 @@ pub(crate) fn ExportBar() -> impl IntoView {
     let exporting = RwSignal::new(false);
 
     view! {
-        <div class="export-bar" class:panel-off=move || !state.show_export.get()>
+        <div class="export-bar" class:panel-off=move || !state.panels.export.get()>
             <span class="mark-label">"导出勾选"</span>
             <span class="mark-label">"导出到"</span>
             <select
@@ -106,28 +106,34 @@ pub(crate) fn ExportBar() -> impl IntoView {
                         {
                             Ok(report) => {
                                 if report.total == 0 {
-                                    state.status.set("请先勾选图片".into());
+                                    let _ = state.status.try_update(|s| *s = "请先勾选图片".into());
                                 } else if report.failures.is_empty() {
-                                    state.status.set(format!("已导出 {} 张", report.ok));
+                                    let _ = state
+                                        .status
+                                        .try_update(|s| *s = format!("已导出 {} 张", report.ok));
                                 } else {
                                     let failed = report.failures.len();
-                                    state.status.set(format!(
-                                        "已导出 {}/{} 张，失败 {failed}",
-                                        report.ok, report.total
-                                    ));
+                                    let _ = state.status.try_update(|s| {
+                                        *s = format!(
+                                            "已导出 {}/{} 张，失败 {failed}",
+                                            report.ok, report.total
+                                        )
+                                    });
                                     state.report_failures("导出失败", report.failures);
                                 }
                                 if let Some(url) = report.download_url {
                                     start_download(&url);
                                 }
                                 if dest_api == "dir" && report.ok > 0 {
-                                    state.refresh.update(|v| *v += 1);
+                                    state.bump_listings();
                                 }
                             }
-                            Err(e) => state.status.set(format!("导出失败：{e}")),
+                            Err(e) => {
+                                let _ = state.status.try_update(|s| *s = format!("导出失败：{e}"));
+                            }
                         }
-                        exporting.set(false);
-                        state.busy.set(false);
+                        let _ = exporting.try_update(|v| *v = false);
+                        let _ = state.busy.try_update(|v| *v = false);
                     });
                 }
             >
